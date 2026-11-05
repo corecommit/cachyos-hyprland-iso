@@ -8,17 +8,17 @@ Built automatically from the upstream CachyOS-Live-ISO by a GitHub Actions workf
 
 <br>
 
-[![Build](https://img.shields.io/github/actions/workflow/status/corecommit/custom-linux-iso/cachyos-hyprland.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=BUILD&labelColor=1e1e2e)](https://github.com/corecommit/custom-linux-iso/actions/workflows/cachyos-hyprland.yml)
-[![Release](https://img.shields.io/github/v/release/corecommit/custom-linux-iso?style=for-the-badge&logo=github&logoColor=white&label=RELEASE&labelColor=1e1e2e&color=b4befe)](https://github.com/corecommit/custom-linux-iso/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/corecommit/custom-linux-iso/total?style=for-the-badge&logo=download&logoColor=white&label=DOWNLOADS&labelColor=1e1e2e&color=a6e3a1)](https://github.com/corecommit/custom-linux-iso/releases)
-[![Stars](https://img.shields.io/github/stars/corecommit/custom-linux-iso?style=for-the-badge&logo=github&logoColor=white&label=STARS&labelColor=1e1e2e&color=f9e2af)](https://github.com/corecommit/custom-linux-iso/stargazers)
+[![Build](https://img.shields.io/github/actions/workflow/status/corecommit/cachyos-hyprland-iso/cachyos-hyprland.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=BUILD&labelColor=1e1e2e)](https://github.com/corecommit/cachyos-hyprland-iso/actions/workflows/cachyos-hyprland.yml)
+[![Release](https://img.shields.io/github/v/release/corecommit/cachyos-hyprland-iso?style=for-the-badge&logo=github&logoColor=white&label=RELEASE&labelColor=1e1e2e&color=b4befe)](https://github.com/corecommit/cachyos-hyprland-iso/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/corecommit/cachyos-hyprland-iso/total?style=for-the-badge&logo=download&logoColor=white&label=DOWNLOADS&labelColor=1e1e2e&color=a6e3a1)](https://github.com/corecommit/cachyos-hyprland-iso/releases)
+[![Stars](https://img.shields.io/github/stars/corecommit/cachyos-hyprland-iso?style=for-the-badge&logo=github&logoColor=white&label=STARS&labelColor=1e1e2e&color=f9e2af)](https://github.com/corecommit/cachyos-hyprland-iso/stargazers)
 
 ![Arch Linux](https://img.shields.io/badge/BASE-ARCH_LINUX-1793D1?style=for-the-badge&logo=archlinux&logoColor=white&labelColor=1e1e2e)
 ![CachyOS](https://img.shields.io/badge/DISTRO-CACHYOS-08A283?style=for-the-badge&logo=archlinux&logoColor=white&labelColor=1e1e2e)
 ![Hyprland](https://img.shields.io/badge/WM-HYPRLAND-58E1FF?style=for-the-badge&logo=hyprland&logoColor=white&labelColor=1e1e2e)
 ![Wayland](https://img.shields.io/badge/DISPLAY-WAYLAND-FFBC00?style=for-the-badge&logo=wayland&logoColor=white&labelColor=1e1e2e)
 
-[Download](https://github.com/corecommit/custom-linux-iso/releases/latest) |
+[Download](https://github.com/corecommit/cachyos-hyprland-iso/releases/latest) |
 [How it works](#how-it-works) |
 [Shortcuts](#keyboard-shortcuts) |
 [Warnings](#warnings-read-before-booting) |
@@ -81,7 +81,7 @@ Nothing here is a fork of CachyOS. The workflow downloads the upstream profile o
 
 ## Quick start
 
-1. Download the latest ISO and its `.sha256` file from the [Releases](https://github.com/corecommit/custom-linux-iso/releases/latest) page.
+1. Download the latest ISO and its `.sha256` file from the [Releases](https://github.com/corecommit/cachyos-hyprland-iso/releases/latest) page.
 2. Verify it:
 
    ```bash
