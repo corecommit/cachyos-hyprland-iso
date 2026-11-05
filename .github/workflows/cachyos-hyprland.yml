@@ -241,6 +241,14 @@ jobs:
           mkdir -p "$AIROOT/etc/greetd"
           cat > "$AIROOT/etc/greetd/hypr-session.sh" <<'SESSION'
           #!/bin/sh
+          # The live user's home can exist before /etc/skel is applied, which makes
+          # Hyprland find no config and generate its own stock hyprland.lua (kitty/
+          # dolphin wizard, no bar). Copy our defaults in if they are missing.
+          if [ ! -f "$HOME/.config/hypr/hyprland.conf" ]; then
+            mkdir -p "$HOME"
+            cp -rn /etc/skel/. "$HOME"/ 2>/dev/null || true
+            rm -f "$HOME/.config/hypr/hyprland.lua"
+          fi
           if command -v start-hyprland >/dev/null 2>&1; then
             exec start-hyprland
           fi
@@ -358,6 +366,7 @@ jobs:
           # Apps and session
           bind = $mod, RETURN, exec, $term
           bind = $mod, D, exec, $menu
+          bind = $mod, SPACE, exec, $menu
           bind = $mod, E, exec, $files
           bind = $mod, B, exec, firefox
           bind = $mod, L, exec, hyprlock
@@ -375,6 +384,23 @@ jobs:
           bind = $mod, down, movefocus, d
           bindm = $mod, mouse:272, movewindow
           bindm = $mod, mouse:273, resizewindow
+
+          # Move and resize windows
+          bind = $mod SHIFT, left, movewindow, l
+          bind = $mod SHIFT, right, movewindow, r
+          bind = $mod SHIFT, up, movewindow, u
+          bind = $mod SHIFT, down, movewindow, d
+          binde = $mod CTRL, left, resizeactive, -40 0
+          binde = $mod CTRL, right, resizeactive, 40 0
+          binde = $mod CTRL, up, resizeactive, 0 -40
+          binde = $mod CTRL, down, resizeactive, 0 40
+          bind = $mod, Y, pin
+
+          # Workspaces: next/previous with . and , or Super + scroll
+          bind = $mod, period, workspace, e+1
+          bind = $mod, comma, workspace, e-1
+          bind = $mod, mouse_down, workspace, e+1
+          bind = $mod, mouse_up, workspace, e-1
 
           # Screenshot to clipboard
           bind = , Print, exec, grim -g "$(slurp)" - | wl-copy
