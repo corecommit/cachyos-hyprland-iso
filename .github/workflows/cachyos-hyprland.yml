@@ -106,9 +106,25 @@ jobs:
             echo "::warning::Only ${avail}G free; the build may run out of disk."
           fi
 
+      - name: Compute cache key
+        id: cachekey
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      # Package downloads are the slowest network part of the build. The mkarchiso
+      # work dir is not cached on purpose (it is rebuilt every time and is huge).
+      # Bump v1 -> v2 in both keys below to throw the cache away.
+      - name: Restore pacman package cache
+        id: pacman-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: pacman-pkg-v1-${{ steps.cachekey.outputs.day }}
+          restore-keys: |
+            pacman-pkg-v1-
+
       - name: Install Base Build Dependencies
         run: |
-          pacman -Syu --noconfirm archiso mkinitcpio-archiso git squashfs-tools grub syslinux python
+          pacman -Syu --noconfirm archiso mkinitcpio-archiso git squashfs-tools grub syslinux python lua pacman-contrib
 
       - name: Install patch helper
         run: |
@@ -190,6 +206,7 @@ jobs:
             bluez bluez-utils thunar
             swaybg brightnessctl otf-font-awesome
             kitty fish fastfetch firefox nano
+            cliphist libnotify
           )
 
           REMOVE=(
@@ -294,13 +311,15 @@ jobs:
           mkdir -p "$AIROOT/etc/greetd"
           cat > "$AIROOT/etc/greetd/hypr-session.sh" <<'SESSION'
           #!/bin/sh
-          # The live user's home can exist before /etc/skel is applied, which makes
-          # Hyprland find no config and generate its own stock hyprland.lua (kitty/
-          # dolphin wizard, no bar). Copy our defaults in if they are missing.
-          if [ ! -f "$HOME/.config/hypr/hyprland.conf" ]; then
+          # Hyprland 0.57+ only reads ~/.config/hypr/hyprland.lua. If the live user's
+          # home exists before /etc/skel is applied, Hyprland writes its own stock
+          # hyprland.lua (kitty/dolphin wizard, no bar). Copy our defaults in when
+          # the file is missing, or when it is that stock example.
+          LUA="$HOME/.config/hypr/hyprland.lua"
+          if [ ! -f "$LUA" ] || grep -q 'This is an example Hyprland Lua config' "$LUA" 2>/dev/null; then
             mkdir -p "$HOME"
+            rm -f "$LUA"
             cp -rn /etc/skel/. "$HOME"/ 2>/dev/null || true
-            rm -f "$HOME/.config/hypr/hyprland.lua"
           fi
           if command -v start-hyprland >/dev/null 2>&1; then
             exec start-hyprland
@@ -358,119 +377,113 @@ jobs:
           PYWALL
           python3 /tmp/mkwall.py "$CONF/hypr/wallpaper.png"
 
-          cat > "$CONF/hypr/hyprland.conf" <<'HYPRRICE'
-          monitor=,preferred,auto,1
+          cat > "$CONF/hypr/hyprland.lua" <<'HYPRRICE'
+          -- cachyos-hyprland rice
+          -- Hyprland 0.57+ only reads hyprland.lua; the old hyprland.conf is ignored.
+          local mod   = "SUPER"
+          local term  = "kitty"
+          local files = "thunar"
+          local menu  = "wofi --show drun"
 
-          $mod = SUPER
-          $term = kitty
-          $files = thunar
-          $menu = wofi --show drun
+          hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 
-          exec-once = systemctl --user start hyprpolkitagent
-          exec-once = swaybg -i ~/.config/hypr/wallpaper.png -m fill
-          exec-once = waybar
-          exec-once = mako
+          hl.env("XCURSOR_SIZE", "24")
 
-          env = XCURSOR_SIZE,24
+          hl.on("hyprland.start", function()
+            hl.exec_cmd("systemctl --user start hyprpolkitagent")
+            hl.exec_cmd("swaybg -i ~/.config/hypr/wallpaper.png -m fill")
+            hl.exec_cmd("waybar")
+            hl.exec_cmd("mako")
+            hl.exec_cmd("wl-paste --type text --watch cliphist store")
+            hl.exec_cmd("wl-paste --type image --watch cliphist store")
+          end)
 
-          general {
-              gaps_in = 4
-              gaps_out = 10
-              border_size = 2
-              col.active_border = rgba(b4befeee)
-              col.inactive_border = rgba(31324488)
-              layout = dwindle
-          }
+          hl.config({
+            general = {
+              gaps_in = 4,
+              gaps_out = 10,
+              border_size = 2,
+              col = {
+                active_border = "rgba(b4befeee)",
+                inactive_border = "rgba(31324488)",
+              },
+              layout = "dwindle",
+            },
+            decoration = {
+              rounding = 12,
+              blur = { enabled = true, size = 5, passes = 2 },
+              shadow = { enabled = false },
+            },
+            animations = { enabled = true },
+            input = {
+              kb_layout = "us",
+              follow_mouse = 1,
+              touchpad = {
+                natural_scroll = true,
+                ["tap-to-click"] = true,
+              },
+            },
+            misc = {
+              disable_hyprland_logo = true,
+              disable_splash_rendering = true,
+              force_default_wallpaper = 0,
+            },
+          })
 
-          decoration {
-              rounding = 12
-              blur {
-                  enabled = true
-                  size = 5
-                  passes = 2
-              }
-              shadow {
-                  enabled = false
-              }
-          }
+          hl.animation({ leaf = "windows",    enabled = true, speed = 3, bezier = "default", style = "slide" })
+          hl.animation({ leaf = "fade",       enabled = true, speed = 3, bezier = "default" })
+          hl.animation({ leaf = "workspaces", enabled = true, speed = 3, bezier = "default", style = "slide" })
 
-          animations {
-              enabled = true
-              animation = windows, 1, 3, default, slide
-              animation = fade, 1, 3, default
-              animation = workspaces, 1, 3, default, slide
-          }
+          -- Apps and session
+          hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd(term))
+          hl.bind(mod .. " + D",      hl.dsp.exec_cmd(menu))
+          hl.bind(mod .. " + SPACE",  hl.dsp.exec_cmd("sh ~/.config/hypr/palette.sh"))
+          hl.bind(mod .. " + E",      hl.dsp.exec_cmd(files))
+          hl.bind(mod .. " + B",      hl.dsp.exec_cmd("firefox"))
+          hl.bind(mod .. " + L",      hl.dsp.exec_cmd("hyprlock"))
+          hl.bind(mod .. " + F1",     hl.dsp.exec_cmd("kitty -e less ~/.config/hypr/hyprland.lua"))
+          hl.bind(mod .. " + Q",      hl.dsp.window.close())
+          hl.bind(mod .. " + SHIFT + R", hl.dsp.exec_cmd("hyprctl reload"))
+          hl.bind(mod .. " + SHIFT + E", hl.dsp.exit())
 
-          input {
-              kb_layout = us
-              follow_mouse = 1
-              touchpad {
-                  natural_scroll = true
-                  tap-to-click = true
-              }
-          }
+          -- Window management
+          hl.bind(mod .. " + V", hl.dsp.window.float({ action = "toggle" }))
+          hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
+          hl.bind(mod .. " + left",  hl.dsp.focus({ direction = "left" }))
+          hl.bind(mod .. " + right", hl.dsp.focus({ direction = "right" }))
+          hl.bind(mod .. " + up",    hl.dsp.focus({ direction = "up" }))
+          hl.bind(mod .. " + down",  hl.dsp.focus({ direction = "down" }))
+          hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
+          hl.bind(mod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 
-          misc {
-              disable_hyprland_logo = true
-              disable_splash_rendering = true
-              force_default_wallpaper = 0
-          }
+          -- Move windows
+          hl.bind(mod .. " + SHIFT + left",  hl.dsp.window.move({ direction = "left" }))
+          hl.bind(mod .. " + SHIFT + right", hl.dsp.window.move({ direction = "right" }))
+          hl.bind(mod .. " + SHIFT + up",    hl.dsp.window.move({ direction = "up" }))
+          hl.bind(mod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "down" }))
 
-          # Apps and session
-          bind = $mod, RETURN, exec, $term
-          bind = $mod, D, exec, $menu
-          bind = $mod, SPACE, exec, $menu
-          bind = $mod, E, exec, $files
-          bind = $mod, B, exec, firefox
-          bind = $mod, L, exec, hyprlock
-          bind = $mod, F1, exec, kitty -e less ~/.config/hypr/hyprland.conf
-          bind = $mod, Q, killactive
-          bind = $mod SHIFT, R, exec, hyprctl reload
-          bind = $mod SHIFT, E, exit
+          -- Workspaces: next/previous with . and , or Super + scroll
+          hl.bind(mod .. " + period",     hl.dsp.focus({ workspace = "e+1" }))
+          hl.bind(mod .. " + comma",      hl.dsp.focus({ workspace = "e-1" }))
+          hl.bind(mod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
+          hl.bind(mod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
 
-          # Window management
-          bind = $mod, V, togglefloating
-          bind = $mod, F, fullscreen
-          bind = $mod, left, movefocus, l
-          bind = $mod, right, movefocus, r
-          bind = $mod, up, movefocus, u
-          bind = $mod, down, movefocus, d
-          bindm = $mod, mouse:272, movewindow
-          bindm = $mod, mouse:273, resizewindow
+          -- Screenshot to clipboard
+          hl.bind("Print", hl.dsp.exec_cmd("sh -c 'grim -g \"$(slurp)\" - | wl-copy'"))
 
-          # Move and resize windows
-          bind = $mod SHIFT, left, movewindow, l
-          bind = $mod SHIFT, right, movewindow, r
-          bind = $mod SHIFT, up, movewindow, u
-          bind = $mod SHIFT, down, movewindow, d
-          binde = $mod CTRL, left, resizeactive, -40 0
-          binde = $mod CTRL, right, resizeactive, 40 0
-          binde = $mod CTRL, up, resizeactive, 0 -40
-          binde = $mod CTRL, down, resizeactive, 0 40
-          bind = $mod, Y, pin
+          -- Media keys
+          hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
+          hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),      { locked = true, repeating = true })
+          hl.bind("XF86AudioMute",         hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),     { locked = true })
+          hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd("brightnessctl set 5%+"), { locked = true, repeating = true })
+          hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl set 5%-"), { locked = true, repeating = true })
 
-          # Workspaces: next/previous with . and , or Super + scroll
-          bind = $mod, period, workspace, e+1
-          bind = $mod, comma, workspace, e-1
-          bind = $mod, mouse_down, workspace, e+1
-          bind = $mod, mouse_up, workspace, e-1
-
-          # Screenshot to clipboard
-          bind = , Print, exec, grim -g "$(slurp)" - | wl-copy
-
-          # Media keys
-          bindel = , XF86AudioRaiseVolume, exec, wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+
-          bindel = , XF86AudioLowerVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
-          bindl  = , XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
-          bindel = , XF86MonBrightnessUp, exec, brightnessctl set 5%+
-          bindel = , XF86MonBrightnessDown, exec, brightnessctl set 5%-
-
-          # Workspaces 1-9
+          -- Workspaces 1-9
+          for i = 1, 9 do
+            hl.bind(mod .. " + " .. i,           hl.dsp.focus({ workspace = i }))
+            hl.bind(mod .. " + SHIFT + " .. i,   hl.dsp.window.move({ workspace = i }))
+          end
           HYPRRICE
-          for i in 1 2 3 4 5 6 7 8 9; do
-            printf 'bind = $mod, %s, workspace, %s\n' "$i" "$i"
-            printf 'bind = $mod SHIFT, %s, movetoworkspace, %s\n' "$i" "$i"
-          done >> "$CONF/hypr/hyprland.conf"
 
           cat > "$CONF/waybar/config.jsonc" <<'WBCONF'
           {
@@ -484,7 +497,7 @@ jobs:
             "modules-left": ["custom/launcher", "clock", "temperature", "memory"],
             "modules-center": ["hyprland/workspaces", "hyprland/window"],
             "modules-right": ["tray", "network", "pulseaudio", "battery", "custom/power"],
-            "custom/launcher": { "format": "\uf002", "tooltip": false, "on-click": "wofi --show drun" },
+            "custom/launcher": { "format": "\uf002", "tooltip": false, "on-click": "wofi --show drun", "on-click-right": "sh ~/.config/hypr/palette.sh" },
             "clock": { "format": "{:%H:%M %A %m/%d/%y}", "tooltip": false },
             "temperature": { "format": "\uf2c9  {temperatureC}°C", "critical-threshold": 85 },
             "memory": { "format": "\uf538  {used:0.1f} GiB" },
@@ -558,6 +571,143 @@ jobs:
             Shutdown) systemctl poweroff ;;
           esac
           WBPOWER
+
+          cat > "$CONF/hypr/palette.sh" <<'WBPALETTE'
+          #!/bin/sh
+          # Command palette (Super+Space, or right-click the launcher icon in the bar).
+          # Type to filter (fuzzy), Enter to run. Recently used entries float to the top.
+          # To add a command: add a line to the list and a matching case below.
+          HIST="${XDG_CACHE_HOME:-$HOME/.cache}/palette-history"
+          mkdir -p "$(dirname "$HIST")"
+          touch "$HIST"
+
+          notify() { command -v notify-send >/dev/null 2>&1 && notify-send -t 2500 "$@"; return 0; }
+          menu()   { wofi --dmenu --insensitive --matching fuzzy --cache-file /dev/null "$@"; }
+          term()   { exec kitty -e "$@"; }
+
+          ALL=$(printf '%s\n' \
+            "App: Search all applications" \
+            "App: Terminal" \
+            "App: Files" \
+            "App: Browser" \
+            "Window: Toggle floating" \
+            "Window: Toggle fullscreen" \
+            "Window: Close" \
+            "Screenshot: area to clipboard" \
+            "Screenshot: area to file" \
+            "Screenshot: full screen to file" \
+            "Clipboard: History" \
+            "Clipboard: Clear history" \
+            "Audio: Toggle mute" \
+            "Audio: Toggle microphone mute" \
+            "Audio: Volume up" \
+            "Audio: Volume down" \
+            "Audio: Set volume to 100%" \
+            "Display: Brightness up" \
+            "Display: Brightness down" \
+            "Network: Wi-Fi and connections" \
+            "Network: Toggle Wi-Fi" \
+            "Network: Show IP address" \
+            "Bluetooth: Open bluetoothctl" \
+            "Bluetooth: Toggle power" \
+            "Hyprland: Reload config" \
+            "Hyprland: Show config errors" \
+            "Hyprland: Edit config" \
+            "Hyprland: Show keybinds" \
+            "Hyprland: Restart waybar" \
+            "System: System info" \
+            "System: Lock screen" \
+            "System: Suspend" \
+            "System: Log out" \
+            "System: Reboot" \
+            "System: Shut down")
+
+          # Last 6 distinct choices first, then everything else (no duplicates).
+          RECENT=$(tac "$HIST" | awk '!seen[$0]++' | head -n 6)
+          LIST=$(printf '%s\n%s\n' "$RECENT" "$ALL" | awk 'NF && !seen[$0]++')
+
+          choice=$(printf '%s\n' "$LIST" | menu --prompt "Command palette" --width 520 --height 480)
+          [ -n "$choice" ] || exit 0
+
+          # Remember the choice (only if it is a known entry), keep the file short.
+          if printf '%s\n' "$ALL" | grep -qxF "$choice"; then
+            printf '%s\n' "$choice" >> "$HIST"
+            tail -n 50 "$HIST" > "$HIST.tmp" && mv "$HIST.tmp" "$HIST"
+          fi
+
+          case "$choice" in
+            "App: Search all applications") exec wofi --show drun ;;
+            "App: Terminal") exec kitty ;;
+            "App: Files") exec thunar ;;
+            "App: Browser") exec firefox ;;
+            "Window: Toggle floating") hyprctl dispatch 'hl.dsp.window.float({ action = "toggle" })' ;;
+            "Window: Toggle fullscreen") hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" })' ;;
+            "Window: Close") hyprctl dispatch 'hl.dsp.window.close()' ;;
+            "Screenshot: area to clipboard")
+              sleep 0.3
+              grim -g "$(slurp)" - | wl-copy && notify "Screenshot" "Copied to clipboard"
+              ;;
+            "Screenshot: area to file")
+              sleep 0.3
+              mkdir -p "$HOME/Pictures"
+              f="$HOME/Pictures/shot-$(date +%Y%m%d-%H%M%S).png"
+              grim -g "$(slurp)" "$f" && notify "Screenshot saved" "$f"
+              ;;
+            "Screenshot: full screen to file")
+              sleep 0.3
+              mkdir -p "$HOME/Pictures"
+              f="$HOME/Pictures/shot-$(date +%Y%m%d-%H%M%S).png"
+              grim "$f" && notify "Screenshot saved" "$f"
+              ;;
+            "Clipboard: History")
+              if command -v cliphist >/dev/null 2>&1; then
+                sel=$(cliphist list | menu --prompt "Clipboard" --width 640 --height 480)
+                [ -n "$sel" ] && printf '%s' "$sel" | cliphist decode | wl-copy
+              else
+                notify "Clipboard" "cliphist is not installed"
+              fi
+              ;;
+            "Clipboard: Clear history") cliphist wipe && notify "Clipboard" "History cleared" ;;
+            "Audio: Toggle mute") wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
+            "Audio: Toggle microphone mute") wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle ;;
+            "Audio: Volume up") wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+ ;;
+            "Audio: Volume down") wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- ;;
+            "Audio: Set volume to 100%") wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.0 ;;
+            "Display: Brightness up") brightnessctl set 5%+ ;;
+            "Display: Brightness down") brightnessctl set 5%- ;;
+            "Network: Wi-Fi and connections") term nmtui ;;
+            "Network: Toggle Wi-Fi")
+              if nmcli radio wifi | grep -q '^enabled'; then
+                nmcli radio wifi off && notify "Wi-Fi" "Turned off"
+              else
+                nmcli radio wifi on && notify "Wi-Fi" "Turned on"
+              fi
+              ;;
+            "Network: Show IP address")
+              ip=$(ip -brief address | awk '$2 == "UP" {print $1 ": " $3}' | paste -sd ' ' -)
+              notify "IP address" "${ip:-no active connection}"
+              ;;
+            "Bluetooth: Open bluetoothctl") term bluetoothctl ;;
+            "Bluetooth: Toggle power")
+              if bluetoothctl show | grep -q 'Powered: yes'; then
+                bluetoothctl power off >/dev/null && notify "Bluetooth" "Turned off"
+              else
+                bluetoothctl power on >/dev/null && notify "Bluetooth" "Turned on"
+              fi
+              ;;
+            "Hyprland: Reload config") hyprctl reload ;;
+            "Hyprland: Show config errors") term sh -c 'hyprctl configerrors; echo; read -r _' ;;
+            "Hyprland: Edit config") term nano "$HOME/.config/hypr/hyprland.lua" ;;
+            "Hyprland: Show keybinds") term less "$HOME/.config/hypr/hyprland.lua" ;;
+            "Hyprland: Restart waybar") pkill -x waybar; sleep 0.3; exec waybar ;;
+            "System: System info") term sh -c 'fastfetch; echo; read -r _' ;;
+            "System: Lock screen") exec hyprlock ;;
+            "System: Suspend") systemctl suspend ;;
+            "System: Log out") hyprctl dispatch 'hl.dsp.exit()' ;;
+            "System: Reboot") systemctl reboot ;;
+            "System: Shut down") systemctl poweroff ;;
+          esac
+          WBPALETTE
 
           cat > "$CONF/kitty/kitty.conf" <<'KITTYCONF'
           shell fish
@@ -761,9 +911,23 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.conf etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
+          for sh_file in palette.sh; do
+            if ! sh -n "cachyos/archiso/airootfs/etc/skel/.config/hypr/$sh_file"; then
+              echo "VERIFY FAIL: $sh_file has a shell syntax error" >&2; fail=1
+            fi
+          done
+          if ! grep -q 'SPACE.*palette\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: Super+Space is not bound to the command palette" >&2; fail=1
+          fi
+          if ! luac -p cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: hyprland.lua has a Lua syntax error" >&2; fail=1
+          fi
+          if [ -e cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.conf ]; then
+            echo "VERIFY FAIL: legacy hyprland.conf shipped (ignored by Hyprland 0.57+)" >&2; fail=1
+          fi
           if find cachyos/archiso/airootfs/etc/systemd -name '*ModemManager*' 2>/dev/null | grep -q .; then
             echo "VERIFY FAIL: ModemManager unit links still in airootfs" >&2; fail=1
           fi
@@ -824,6 +988,21 @@ jobs:
             exit 1
           fi
         working-directory: ${{ github.workspace }}
+
+      - name: Prune pacman cache
+        if: ${{ !cancelled() }}
+        run: |
+          # Drop half-finished downloads and old versions so the cache stays small.
+          find /var/cache/pacman/pkg -maxdepth 1 \( -name 'download-*' -o -name '*.part' \) -exec rm -rf {} + || true
+          paccache -rk1 -c /var/cache/pacman/pkg || true
+          du -sh /var/cache/pacman/pkg || true
+
+      - name: Save pacman package cache
+        if: ${{ !cancelled() && steps.pacman-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: pacman-pkg-v1-${{ steps.cachekey.outputs.day }}
 
       - name: Upload build log on failure
         if: failure()
