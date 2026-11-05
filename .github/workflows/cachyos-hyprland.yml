@@ -11,6 +11,18 @@ on:
         description: "Keep the CachyOS installer(s) in the ISO"
         type: boolean
         default: true
+      version:
+        description: "Version as major.minor.patch (used in the ISO file name and the release tag)"
+        type: string
+        default: "1.0.0"
+      release:
+        description: "Publish the ISO to a GitHub Release (tag pushes always release)"
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark the release as a pre-release"
+        type: boolean
+        default: false
   push:
     tags:
       - 'cachyos-v*'
@@ -42,6 +54,47 @@ jobs:
         -v /usr/share/dotnet:/host/dotnet
 
     steps:
+      - name: Resolve version and release settings
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "push" ]; then
+            # Tag push such as cachyos-v1.2.3: version comes from the tag, always release.
+            version="${REF_NAME#cachyos-v}"
+            release=true
+            tag="$REF_NAME"
+          else
+            version="${IN_VERSION:-}"
+            release="${IN_RELEASE:-false}"
+            tag="v${version}"
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "::error::Version '$version' is not major.minor.patch (for example 1.2.3)." >&2
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "release=$release"
+            echo "tag=$tag"
+            echo "iso_name=cachyos-hyprland-${version}-x86_64.iso"
+            echo "release_name=CachyOS Hyprland ISO v${version}"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Version ${version}"
+            echo ""
+            echo "- ISO file: \`cachyos-hyprland-${version}-x86_64.iso\`"
+            if [ "$release" = "true" ]; then
+              echo "- Release: **yes**, tag \`${tag}\`"
+            else
+              echo "- Release: **no** (artifact only)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Free host disk space
         run: |
           for d in /host/android /host/dotnet; do
@@ -675,6 +728,21 @@ jobs:
           done
           find cachyos/archiso -name '*linux-cachyos-lts*' -prune -print -exec rm -rf {} +
 
+      - name: Stamp version into the ISO
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          up=$(git -c safe.directory='*' -C cachyos rev-parse HEAD)
+          mkdir -p cachyos/archiso/airootfs/etc
+          {
+            echo "NAME=\"CachyOS Hyprland ISO\""
+            echo "VERSION=\"$VERSION\""
+            echo "BUILD_DATE=\"$(date -u +%Y-%m-%d)\""
+            echo "UPSTREAM_COMMIT=\"$up\""
+            echo "REPO=\"https://github.com/${{ github.repository }}\""
+          } > cachyos/archiso/airootfs/etc/cachyos-hyprland-release
+
       - name: Verify patched profile
         run: |
           set -euo pipefail
@@ -765,6 +833,24 @@ jobs:
           path: build.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Rename ISO
+        env:
+          ISO_NAME: ${{ steps.meta.outputs.iso_name }}
+        run: |
+          set -euo pipefail
+          # Give the ISO a stable name and drop upstream's checksum/signature files;
+          # a fresh .sha256 for the new name is written in a later step.
+          n=0
+          while IFS= read -r iso; do
+            dir=$(dirname "$iso")
+            if [ "$n" -eq 0 ]; then new="$dir/$ISO_NAME"; else new="$dir/${ISO_NAME%.iso}-$n.iso"; fi
+            rm -f "$iso".*
+            if [ "$iso" != "$new" ]; then mv "$iso" "$new"; fi
+            echo "ISO: $new"
+            n=$((n + 1))
+          done < <(find cachyos/out -name '*.iso' | sort)
+          [ "$n" -gt 0 ] || { echo "::error::no ISO found to rename" >&2; exit 1; }
 
       - name: Check boot configs against kernels in the ISO
         run: |
@@ -858,13 +944,54 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Write release notes
+        if: steps.meta.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          iso=$(find cachyos/out -name '*.iso' | sort | head -n1)
+          sum=$(cut -d' ' -f1 "$iso.sha256")
+          size=$(du -h "$iso" | cut -f1)
+          up=$(git -c safe.directory='*' -C cachyos rev-parse --short HEAD)
+          {
+            echo "## CachyOS Hyprland ISO v${VERSION}"
+            echo ""
+            echo "Unofficial CachyOS live ISO with a Hyprland desktop instead of KDE Plasma."
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| File | \`$(basename "$iso")\` |"
+            echo "| Size | $size |"
+            echo "| SHA-256 | \`$sum\` |"
+            echo "| Upstream | CachyOS-Live-ISO \`$up\` |"
+            echo ""
+            echo "### Before you boot"
+            echo ""
+            echo "- 4 GB of RAM is the practical minimum, 8 GB or more is recommended. Live changes are kept in RAM and lost on reboot."
+            echo "- Disable Secure Boot."
+            echo "- Verify the download with \`sha256sum -c <file>.sha256\`."
+            echo "- This is not an official CachyOS release."
+            echo ""
+          } > release-notes.md
+
       - name: Release ISO
-        if: startsWith(github.ref, 'refs/tags/cachyos-v') && steps.size.outputs.release_ok == 'true'
+        if: steps.meta.outputs.release == 'true' && steps.size.outputs.release_ok == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ inputs.prerelease == true }}
+          body_path: release-notes.md
           files: |
             cachyos/out/**/*.iso
             cachyos/out/**/*.sha256
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Note when release was skipped
+        if: steps.meta.outputs.release != 'true'
+        run: |
+          echo "Release skipped (release=false). The ISO is available as the workflow artifact." >> "$GITHUB_STEP_SUMMARY"
