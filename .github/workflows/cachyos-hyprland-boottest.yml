@@ -214,6 +214,12 @@ jobs:
               bg = sum(1 for p in px if all(abs(a - b) <= 6 for a, b in zip(p, BG))) / n
               return nonblack, bg, len(set(px))
 
+          def is_desktop(nonblack, bg, colors):
+              # Hyprland: swaybg colour fills the screen. Plasma or any other
+              # desktop: screen is lit and very colourful. Console text, boot
+              # menus and emergency shells have few colours.
+              return bg >= BG_MIN or (nonblack >= 0.90 and colors >= 1500)
+
           code, vars_src = find_ovmf()
           vars_ = os.path.join(out, 'OVMF_VARS.fd')
           sock = os.path.join(out, 'qmp.sock')
@@ -305,7 +311,7 @@ jobs:
               i += 1
               nonblack, bg, colors = analyze(path)
               log('[t=%4ds] nonblack=%.2f bg(1e1e2e)=%.2f colors=%d' % (t, nonblack, bg, colors))
-              if bg >= BG_MIN:
+              if is_desktop(nonblack, bg, colors):
                   streak += 1
               else:
                   streak = 0
@@ -315,7 +321,7 @@ jobs:
                   path = shot('confirm.png')
                   nonblack, bg, colors = analyze(path)
                   log('confirm: nonblack=%.2f bg=%.2f colors=%d' % (nonblack, bg, colors))
-                  if bg < BG_MIN:
+                  if not is_desktop(nonblack, bg, colors):
                       streak = 0
                       continue
                   if colors < 8:
