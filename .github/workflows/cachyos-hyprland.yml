@@ -207,18 +207,18 @@ jobs:
           [ -f "$PKG_LIST" ] || { echo "PATCH FAIL: $PKG_LIST not found" >&2; exit 1; }
 
           ADD=(
-            hyprland hyprpaper hyprlock hypridle hyprpolkitagent
+            hyprland hyprlock hyprpolkitagent
             xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
             waybar wofi mako grim slurp wl-clipboard
             qt5-wayland qt6-wayland greetd greetd-tuigreet
             bluez bluez-utils thunar
             swaybg brightnessctl otf-font-awesome
-            kitty fish fastfetch firefox nano
-            cliphist libnotify zram-generator
+            kitty fish fastfetch brave-bin nano
+            cliphist libnotify zram-generator socat
           )
 
           REMOVE=(
-            cachyos-hello cachyos-kde-settings
+            firefox cachyos-hello cachyos-kde-settings
             plasma-desktop plasma-workspace plasma-nm plasma-pa
             plasma-integration plasma-thunderbolt plasma-login-manager
             kde-gtk-config kinfocenter kscreen bluedevil breeze-gtk
@@ -262,7 +262,7 @@ jobs:
               wpa_supplicant mkinitcpio mkinitcpio-archiso linux-cachyos \
               linux-cachyos-nvidia-open nvidia-utils mesa \
               xdg-desktop-portal-hyprland hyprpolkitagent bluez bluez-utils \
-              firefox kitty thunar nano grim slurp greetd greetd-tuigreet \
+              brave-bin kitty thunar nano grim slurp socat greetd greetd-tuigreet \
               sof-firmware linux-firmware grub efibootmgr chwd polkit \
               cryptsetup lvm2 btrfs-progs e2fsprogs syslinux; do
             if ! grep -qxF "$pkg" "$PKG_LIST"; then
@@ -351,39 +351,9 @@ jobs:
 
           # ---- Hyprland "rice" (waybar, kitty, fish, wallpaper) + size trims ----
           CONF="$AIROOT/etc/skel/.config"
-          mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish"
+          mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/gtk-3.0" "$CONF/gtk-4.0"
 
-          # Wallpaper: soft dark-navy glow, generated here (pure python, ~few hundred KB)
-          cat > /tmp/mkwall.py <<'PYWALL'
-          import math, struct, sys, zlib
-          W, H = 960, 540
-          base = (9, 12, 34)
-          blobs = [(0.40, 0.58, 0.20, (170, 140, 70), 0.55),
-                   (0.52, 0.42, 0.15, (80, 80, 190), 0.75),
-                   (0.30, 0.70, 0.12, (120, 100, 60), 0.30)]
-          raw = bytearray()
-          for y in range(H):
-              raw.append(0)
-              fy = y / H
-              for x in range(W):
-                  fx = x / W
-                  r, g, b = base
-                  for cx, cy, rad, col, s in blobs:
-                      dx = (fx - cx) * W / H
-                      dy = fy - cy
-                      w = s * math.exp(-(dx * dx + dy * dy) / (2 * rad * rad))
-                      r += (col[0] - r) * w
-                      g += (col[1] - g) * w
-                      b += (col[2] - b) * w
-                  raw += bytes((int(r), int(g), int(b)))
-          def chunk(t, d):
-              c = struct.pack('>I', len(d)) + t + d
-              return c + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
-          png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)) \
-                + chunk(b'IDAT', zlib.compress(bytes(raw), 9)) + chunk(b'IEND', b'')
-          open(sys.argv[1], 'wb').write(png)
-          PYWALL
-          python3 /tmp/mkwall.py "$CONF/hypr/wallpaper.png"
+          # Wallpaper: none. swaybg paints the background pure black (see hyprland.lua).
 
           cat > "$CONF/hypr/hyprland.lua" <<'HYPRRICE'
           -- cachyos-hyprland rice
@@ -396,11 +366,13 @@ jobs:
           hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 
           hl.env("XCURSOR_SIZE", "24")
+          hl.env("GTK_THEME", "Adwaita:dark")
 
           hl.on("hyprland.start", function()
             hl.exec_cmd("systemctl --user start hyprpolkitagent")
-            hl.exec_cmd("swaybg -i ~/.config/hypr/wallpaper.png -m fill")
+            hl.exec_cmd("swaybg -c '#000000'")
             hl.exec_cmd("waybar")
+            hl.exec_cmd("sh ~/.config/hypr/ws-watch.sh")
             hl.exec_cmd("mako")
             hl.exec_cmd("wl-paste --type text --watch cliphist store")
             hl.exec_cmd("wl-paste --type image --watch cliphist store")
@@ -412,17 +384,17 @@ jobs:
               gaps_out = 10,
               border_size = 2,
               col = {
-                active_border = "rgba(b4befeee)",
-                inactive_border = "rgba(31324488)",
+                active_border = "rgba(ffffffee)",
+                inactive_border = "rgba(2a2a2aaa)",
               },
               layout = "dwindle",
             },
             decoration = {
               rounding = 12,
-              blur = { enabled = true, size = 5, passes = 2 },
+              blur = { enabled = false },
               shadow = { enabled = false },
             },
-            animations = { enabled = true },
+            animations = { enabled = false },
             input = {
               kb_layout = "us",
               follow_mouse = 1,
@@ -438,17 +410,15 @@ jobs:
             },
           })
 
-          hl.animation({ leaf = "windows",    enabled = true, speed = 3, bezier = "default", style = "slide" })
-          hl.animation({ leaf = "fade",       enabled = true, speed = 3, bezier = "default" })
-          hl.animation({ leaf = "workspaces", enabled = true, speed = 3, bezier = "default", style = "slide" })
 
           -- Apps and session
           hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd(term))
           hl.bind(mod .. " + D",      hl.dsp.exec_cmd(menu))
           hl.bind(mod .. " + SPACE",  hl.dsp.exec_cmd("sh ~/.config/hypr/palette.sh"))
           hl.bind(mod .. " + E",      hl.dsp.exec_cmd(files))
-          hl.bind(mod .. " + B",      hl.dsp.exec_cmd("firefox"))
+          hl.bind(mod .. " + B",      hl.dsp.exec_cmd("brave"))
           hl.bind(mod .. " + L",      hl.dsp.exec_cmd("hyprlock"))
+          hl.bind(mod .. " + X",      hl.dsp.exec_cmd("sh ~/.config/hypr/power.sh"))
           hl.bind(mod .. " + F1",     hl.dsp.exec_cmd("kitty -e less ~/.config/hypr/hyprland.lua"))
           hl.bind(mod .. " + Q",      hl.dsp.window.close())
           hl.bind(mod .. " + SHIFT + R", hl.dsp.exec_cmd("hyprctl reload"))
@@ -504,19 +474,18 @@ jobs:
             "margin-left": 10,
             "margin-right": 10,
             "spacing": 6,
-            "modules-left": ["custom/launcher", "clock", "temperature", "memory"],
-            "modules-center": ["hyprland/workspaces", "hyprland/window"],
-            "modules-right": ["tray", "network", "pulseaudio", "battery", "custom/power"],
+            "modules-left": ["custom/launcher", "hyprland/window"],
+            "modules-center": ["custom/ws1", "custom/ws2", "custom/ws3", "custom/ws4", "custom/ws5"],
+            "modules-right": ["tray", "network", "pulseaudio", "battery", "memory", "clock", "custom/power"],
             "custom/launcher": { "format": "\uf002", "tooltip": false, "on-click": "wofi --show drun", "on-click-right": "sh ~/.config/hypr/palette.sh" },
-            "clock": { "format": "{:%H:%M %A %m/%d/%y}", "tooltip": false },
-            "temperature": { "format": "\uf2c9  {temperatureC}°C", "critical-threshold": 85 },
-            "memory": { "format": "\uf538  {used:0.1f} GiB" },
-            "hyprland/workspaces": {
-              "format": "{id}",
-              "disable-scroll": true,
-              "persistent-workspaces": { "*": 3 }
-            },
+            "custom/ws1": { "exec": "sh ~/.config/hypr/ws.sh 1", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 1 })'; hyprctl dispatch workspace 1" },
+            "custom/ws2": { "exec": "sh ~/.config/hypr/ws.sh 2", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 2 })'; hyprctl dispatch workspace 2" },
+            "custom/ws3": { "exec": "sh ~/.config/hypr/ws.sh 3", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 3 })'; hyprctl dispatch workspace 3" },
+            "custom/ws4": { "exec": "sh ~/.config/hypr/ws.sh 4", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 4 })'; hyprctl dispatch workspace 4" },
+            "custom/ws5": { "exec": "sh ~/.config/hypr/ws.sh 5", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 5 })'; hyprctl dispatch workspace 5" },
             "hyprland/window": { "format": "{title}", "max-length": 40 },
+            "clock": { "format": "{:%H:%M  %a %d %b}", "tooltip": false },
+            "memory": { "format": "\uf538  {used:0.1f} GiB" },
             "tray": { "spacing": 8 },
             "network": {
               "format-wifi": "\uf1eb  {essid}",
@@ -537,7 +506,7 @@ jobs:
               "format-icons": ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"],
               "states": { "warning": 25, "critical": 10 }
             },
-            "custom/power": { "format": "\uf011", "tooltip": false, "on-click": "sh ~/.config/waybar/power.sh" }
+            "custom/power": { "format": "\uf011", "tooltip": false, "on-click": "sh ~/.config/hypr/power.sh" }
           }
           WBCONF
 
@@ -549,38 +518,149 @@ jobs:
             border-radius: 0;
             min-height: 0;
           }
-          window#waybar { background: transparent; color: #cdd6f4; }
-          #custom-launcher, #clock, #temperature, #memory, #workspaces, #window,
-          #tray, #network, #pulseaudio, #battery, #custom-power {
-            background: rgba(17, 19, 40, 0.85);
-            border: 1px solid rgba(180, 190, 254, 0.25);
+          window#waybar { background: transparent; color: #e6e6e6; }
+          #custom-launcher, #window, #tray, #network, #pulseaudio, #battery, #memory, #clock, #custom-power {
+            background: #000000;
+            border: 1px solid #2a2a2a;
             border-radius: 14px;
             padding: 2px 12px;
           }
-          #workspaces { padding: 2px 6px; }
-          #workspaces button {
-            padding: 0 6px;
-            margin: 0 2px;
-            color: #6c7086;
-            background: transparent;
-            border-radius: 10px;
+          #custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4, #custom-ws5 {
+            background: #000000;
+            color: #5a5a5a;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            padding: 2px 0;
+            min-width: 26px;
           }
-          #workspaces button.active { background: #b4befe; color: #11132b; min-width: 22px; }
+          #custom-ws1.occupied, #custom-ws2.occupied, #custom-ws3.occupied, #custom-ws4.occupied, #custom-ws5.occupied { color: #e6e6e6; }
+          #custom-ws1.active, #custom-ws2.active, #custom-ws3.active, #custom-ws4.active, #custom-ws5.active { background: #ffffff; color: #000000; }
           window#waybar.empty #window { background: transparent; border-color: transparent; }
           #battery.warning { color: #f9e2af; }
-          #battery.critical, #temperature.critical { color: #f38ba8; }
+          #battery.critical { color: #f38ba8; }
           #custom-power { color: #f38ba8; }
           WBCSS
 
-          cat > "$CONF/waybar/power.sh" <<'WBPOWER'
-          choice=$(printf 'Lock\nLogout\nReboot\nShutdown\n' | wofi --dmenu --prompt Power)
+          cat > "$CONF/hypr/ws.sh" <<'WSSH'
+          #!/bin/sh
+          # Prints waybar JSON for workspace $1: active / occupied / empty.
+          n="$1"
+          cur=$(hyprctl activeworkspace | awk 'NR==1 {print $3}')
+          w=$(hyprctl workspaces | awk -v n="$n" '/^workspace ID/ {f=($3==n)} f && $1=="windows:" {print $2; exit}')
+          if [ "$cur" = "$n" ]; then cls=active
+          elif [ "${w:-0}" -gt 0 ] 2>/dev/null; then cls=occupied
+          else cls=empty; fi
+          printf '{"text":"%s","class":"%s"}\n' "$n" "$cls"
+          WSSH
+
+          cat > "$CONF/hypr/ws-watch.sh" <<'WSWATCH'
+          #!/bin/sh
+          # One tiny listener: when a workspace/window event happens, tell waybar (signal 8)
+          # to refresh the workspace buttons. Needs socat.
+          sock="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+          sleep 3
+          socat -U - "UNIX-CONNECT:$sock" | while read -r line; do
+            case "$line" in
+              workspace*|focusedmon*|createworkspace*|destroyworkspace*|openwindow*|closewindow*|movewindow*)
+                pkill -RTMIN+8 -x waybar ;;
+            esac
+          done
+          WSWATCH
+
+          cat > "$CONF/hypr/power.sh" <<'POWERSH'
+          #!/bin/sh
+          # Power menu (Super+X, the power button in the bar, or "System: Power menu" in the palette).
+          choice=$(printf '%s\n' \
+            "<span size='x-large'></span>  Lock" \
+            "<span size='x-large'></span>  Logout" \
+            "<span size='x-large'></span>  Reboot" \
+            "<span size='x-large'></span>  Shut down" \
+            | wofi --dmenu --allow-markup --hide-search --columns 4 --width 640 --height 130 \
+                --cache-file /dev/null --prompt Power --style "$HOME/.config/wofi/power.css")
           case "$choice" in
-            Lock) hyprlock ;;
-            Logout) hyprctl dispatch exit ;;
-            Reboot) systemctl reboot ;;
-            Shutdown) systemctl poweroff ;;
+            *Lock*) exec hyprlock ;;
+            *Logout*) hyprctl dispatch 'hl.dsp.exit()'; hyprctl dispatch exit ;;
+            *Reboot*) systemctl reboot ;;
+            *Shut\ down*) systemctl poweroff ;;
           esac
-          WBPOWER
+          POWERSH
+
+          cat > "$CONF/wofi/config" <<'WOFICONF'
+          allow_images=true
+          image_size=24
+          insensitive=true
+          matching=fuzzy
+          location=center
+          hide_scroll=true
+          no_actions=true
+          gtk_dark=true
+          WOFICONF
+
+          cat > "$CONF/wofi/style.css" <<'WOFICSS'
+          window {
+            margin: 0;
+            border: 1px solid #2a2a2a;
+            border-radius: 16px;
+            background-color: rgba(0, 0, 0, 0.94);
+            font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+            font-size: 15px;
+          }
+          #outer-box { margin: 14px; background-color: transparent; }
+          #input {
+            margin: 0 0 10px 0;
+            padding: 10px 14px;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            background-color: #0d0d0d;
+            color: #f0f0f0;
+            box-shadow: none;
+            outline: none;
+          }
+          #input:focus { border-color: #6b6b6b; }
+          #scroll { margin: 0; }
+          #inner-box { background-color: transparent; }
+          #entry { padding: 8px 12px; border-radius: 10px; color: #cfcfcf; }
+          #entry:selected { background-color: #1c1c1c; color: #ffffff; }
+          #text { color: inherit; }
+          #img { margin-right: 10px; }
+          WOFICSS
+
+          cat > "$CONF/wofi/power.css" <<'POWERCSS'
+          window {
+            margin: 0;
+            border: 1px solid #2a2a2a;
+            border-radius: 20px;
+            background-color: rgba(0, 0, 0, 0.94);
+            font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+            font-size: 15px;
+          }
+          #outer-box { margin: 12px; background-color: transparent; }
+          #scroll { margin: 0; }
+          #inner-box { background-color: transparent; }
+          #entry { padding: 22px 6px; margin: 2px; border-radius: 14px; color: #cfcfcf; }
+          #entry:selected { background-color: #ffffff; color: #000000; }
+          #text { color: inherit; }
+          POWERCSS
+
+          cat > "$CONF/gtk-3.0/settings.ini" <<'GTK3INI'
+          [Settings]
+          gtk-application-prefer-dark-theme=1
+          GTK3INI
+
+          cat > "$CONF/gtk-4.0/settings.ini" <<'GTK4INI'
+          [Settings]
+          gtk-application-prefer-dark-theme=1
+          GTK4INI
+
+          cat > "$CONF/brave-flags.conf" <<'BRAVEFLAGS'
+          # One flag per line. Read by the brave launcher.
+          --ozone-platform=wayland
+          --force-dark-mode
+          # The live home is RAM: keep the cache small and use fewer renderer processes.
+          --disk-cache-size=52428800
+          --process-per-site
+          BRAVEFLAGS
+
 
           cat > "$CONF/hypr/palette.sh" <<'WBPALETTE'
           #!/bin/sh
@@ -594,6 +674,25 @@ jobs:
           notify() { command -v notify-send >/dev/null 2>&1 && notify-send -t 2500 "$@"; return 0; }
           menu()   { wofi --dmenu --insensitive --matching fuzzy --cache-file /dev/null "$@"; }
           term()   { exec kitty -e "$@"; }
+          # Adds an icon in front of each entry (stripped again after the choice).
+          decorate() {
+            while IFS= read -r line; do
+              case "${line%%:*}" in
+                App) g="" ;;
+                Window) g="" ;;
+                Screenshot) g="" ;;
+                Clipboard) g="" ;;
+                Audio) g="" ;;
+                Display) g="" ;;
+                Network) g="" ;;
+                Bluetooth) g="" ;;
+                Hyprland) g="" ;;
+                System) g="" ;;
+                *) g="" ;;
+              esac
+              printf '%s  %s\n' "$g" "$line"
+            done
+          }
 
           ALL=$(printf '%s\n' \
             "App: Search all applications" \
@@ -626,6 +725,7 @@ jobs:
             "Hyprland: Show keybinds" \
             "Hyprland: Restart waybar" \
             "System: System info" \
+            "System: Power menu" \
             "System: Lock screen" \
             "System: Suspend" \
             "System: Log out" \
@@ -636,8 +736,9 @@ jobs:
           RECENT=$(tac "$HIST" | awk '!seen[$0]++' | head -n 6)
           LIST=$(printf '%s\n%s\n' "$RECENT" "$ALL" | awk 'NF && !seen[$0]++')
 
-          choice=$(printf '%s\n' "$LIST" | menu --prompt "Command palette" --width 520 --height 480)
+          choice=$(printf '%s\n' "$LIST" | decorate | menu --prompt "Search commands" --width 560 --height 460)
           [ -n "$choice" ] || exit 0
+          choice=$(printf '%s' "$choice" | sed 's/^[^ ]*  //')
 
           # Remember the choice (only if it is a known entry), keep the file short.
           if printf '%s\n' "$ALL" | grep -qxF "$choice"; then
@@ -649,7 +750,7 @@ jobs:
             "App: Search all applications") exec wofi --show drun ;;
             "App: Terminal") exec kitty ;;
             "App: Files") exec thunar ;;
-            "App: Browser") exec firefox ;;
+            "App: Browser") exec brave ;;
             "Window: Toggle floating") hyprctl dispatch 'hl.dsp.window.float({ action = "toggle" })' ;;
             "Window: Toggle fullscreen") hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" })' ;;
             "Window: Close") hyprctl dispatch 'hl.dsp.window.close()' ;;
@@ -711,6 +812,7 @@ jobs:
             "Hyprland: Show keybinds") term less "$HOME/.config/hypr/hyprland.lua" ;;
             "Hyprland: Restart waybar") pkill -x waybar; sleep 0.3; exec waybar ;;
             "System: System info") term sh -c 'fastfetch; echo; read -r _' ;;
+            "System: Power menu") exec sh "$HOME/.config/hypr/power.sh" ;;
             "System: Lock screen") exec hyprlock ;;
             "System: Suspend") systemctl suspend ;;
             "System: Log out") hyprctl dispatch 'hl.dsp.exit()' ;;
@@ -741,9 +843,9 @@ jobs:
           shell fish
           font_size 11.0
           window_padding_width 10
-          background_opacity 0.92
-          background #0b0e1f
-          foreground #cdd6f4
+          background_opacity 0.9
+          background #000000
+          foreground #e6e6e6
           cursor_shape beam
           confirm_os_window_close 0
           enable_audio_bell no
@@ -754,9 +856,9 @@ jobs:
               fastfetch
           end
           function fish_prompt
-              set_color cba6f7
+              set_color 8a8a8a
               echo (prompt_pwd)
-              set_color a6e3a1
+              set_color ffffff
               echo -n '❯ '
               set_color normal
           end
@@ -895,7 +997,7 @@ jobs:
             > "$AIROOT/etc/tmpfiles.d/99-live-zswap-off.conf"
           #    c) Logs stay in RAM and are capped; no core dumps are stored.
           mkdir -p "$AIROOT/etc/systemd/journald.conf.d" "$AIROOT/etc/systemd/coredump.conf.d"
-          printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=50M\n' \
+          printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=32M\n' \
             > "$AIROOT/etc/systemd/journald.conf.d/50-live-cap.conf"
           printf '[Coredump]\nStorage=none\nProcessSizeMax=0\n' \
             > "$AIROOT/etc/systemd/coredump.conf.d/50-live-none.conf"
@@ -1011,7 +1113,7 @@ jobs:
           fail=0
           PKG_LIST=cachyos/archiso/packages_desktop.x86_64
 
-          for pkg in plasma-desktop plasma-login-manager linux-cachyos-lts; do
+          for pkg in plasma-desktop plasma-login-manager linux-cachyos-lts firefox; do
             if grep -qxF "$pkg" "$PKG_LIST"; then echo "VERIFY FAIL: $pkg still in package list" >&2; fail=1; fi
           done
           if grep -q 'plasmalogin\.service' cachyos/util-iso.sh; then
@@ -1023,10 +1125,10 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/systemd/zram-generator.conf etc/sysctl.d/99-live-ram.conf etc/tmpfiles.d/99-live-zswap-off.conf etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/hypr/ws.sh etc/skel/.config/hypr/ws-watch.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/wofi/power.css etc/skel/.config/brave-flags.conf etc/systemd/zram-generator.conf etc/sysctl.d/99-live-ram.conf etc/tmpfiles.d/99-live-zswap-off.conf etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
-          for sh_file in palette.sh screenshot.sh; do
+          for sh_file in palette.sh screenshot.sh power.sh ws.sh ws-watch.sh; do
             if ! sh -n "cachyos/archiso/airootfs/etc/skel/.config/hypr/$sh_file"; then
               echo "VERIFY FAIL: $sh_file has a shell syntax error" >&2; fail=1
             fi
@@ -1039,6 +1141,9 @@ jobs:
           fi
           if ! luac -p cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: hyprland.lua has a Lua syntax error" >&2; fail=1
+          fi
+          if ! python3 -m json.tool cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc >/dev/null; then
+            echo "VERIFY FAIL: waybar config.jsonc is not valid JSON" >&2; fail=1
           fi
           if [ -e cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.conf ]; then
             echo "VERIFY FAIL: legacy hyprland.conf shipped (ignored by Hyprland 0.57+)" >&2; fail=1
