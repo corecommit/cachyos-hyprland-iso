@@ -95,6 +95,13 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Fetch CHANGELOG.md
+        uses: actions/checkout@v4
+        with:
+          path: repo-src
+          sparse-checkout: CHANGELOG.md
+          fetch-depth: 1
+
       - name: Free host disk space
         run: |
           for d in /host/android /host/dotnet; do
@@ -207,7 +214,7 @@ jobs:
             bluez bluez-utils thunar
             swaybg brightnessctl otf-font-awesome
             kitty fish fastfetch firefox nano
-            cliphist libnotify
+            cliphist libnotify zram-generator
           )
 
           REMOVE=(
@@ -860,6 +867,60 @@ jobs:
           ln -sf /etc/systemd/system/pacman-live-sync.service \
             "$SYSD/multi-user.target.wants/pacman-live-sync.service"
 
+          # 7. Make the most of RAM in the live session (the live filesystem itself
+          #    lives in RAM, so every MB saved here is a MB for your apps).
+          #    a) zram: compressed swap inside RAM (same setup CachyOS uses on installs):
+          #       size limit = RAM, zstd compression, top swap priority. The limit is
+          #       not reserved memory; RAM is only used for pages actually swapped,
+          #       and zstd typically stores them at 2-3x smaller.
+          cat > "$AIROOT/etc/systemd/zram-generator.conf" <<'ZRAMCONF'
+          [zram0]
+          zram-size = ram
+          compression-algorithm = zstd
+          swap-priority = 100
+          fs-type = swap
+          ZRAMCONF
+          #    b) Kernel tuning that suits zram (prefer compressed swap over dropping
+          #       file cache; no read-ahead since zram is not a spinning disk).
+          mkdir -p "$AIROOT/etc/sysctl.d"
+          cat > "$AIROOT/etc/sysctl.d/99-live-ram.conf" <<'SYSCTLCONF'
+          vm.swappiness = 180
+          vm.page-cluster = 0
+          vm.watermark_boost_factor = 0
+          vm.watermark_scale_factor = 125
+          SYSCTLCONF
+          #       zswap would compress a second time on top of zram, so switch it off.
+          mkdir -p "$AIROOT/etc/tmpfiles.d"
+          printf 'w- /sys/module/zswap/parameters/enabled - - - - 0\n' \
+            > "$AIROOT/etc/tmpfiles.d/99-live-zswap-off.conf"
+          #    c) Logs stay in RAM and are capped; no core dumps are stored.
+          mkdir -p "$AIROOT/etc/systemd/journald.conf.d" "$AIROOT/etc/systemd/coredump.conf.d"
+          printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=50M\n' \
+            > "$AIROOT/etc/systemd/journald.conf.d/50-live-cap.conf"
+          printf '[Coredump]\nStorage=none\nProcessSizeMax=0\n' \
+            > "$AIROOT/etc/systemd/coredump.conf.d/50-live-none.conf"
+          #    d) Downloaded .pkg files would sit in RAM; delete them after each
+          #       pacman install/upgrade (the package databases are kept).
+          mkdir -p "$AIROOT/etc/pacman.d/hooks"
+          cat > "$AIROOT/etc/pacman.d/hooks/zz-live-clean-cache.hook" <<'CLEANHOOK'
+          [Trigger]
+          Operation = Install
+          Operation = Upgrade
+          Type = Package
+          Target = *
+
+          [Action]
+          Description = Freeing RAM: removing downloaded package files (live session)
+          When = PostTransaction
+          Exec = /usr/bin/find /var/cache/pacman/pkg -maxdepth 1 -type f -delete
+          CLEANHOOK
+          #    e) Background timers that only make sense on an installed system.
+          #       (Masking a unit that is not installed is harmless.)
+          for t in man-db.timer shadow.timer archlinux-keyring-wkd-sync.timer \
+                   plocate-updatedb.timer fstrim.timer; do
+            ln -sf /dev/null "$SYSD/$t"
+          done
+
       - name: Patch Boot Entries
         run: |
           set -euo pipefail
@@ -962,7 +1023,7 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/systemd/zram-generator.conf etc/sysctl.d/99-live-ram.conf etc/tmpfiles.d/99-live-zswap-off.conf etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
           for sh_file in palette.sh screenshot.sh; do
@@ -1195,10 +1256,31 @@ jobs:
           sum=$(cut -d' ' -f1 "$iso.sha256")
           size=$(du -h "$iso" | cut -f1)
           up=$(git -c safe.directory='*' -C cachyos rev-parse --short HEAD)
+          # Pull this version's section ("## 1.0.3" or "## [1.0.3] - date") out of CHANGELOG.md.
+          changelog=$(mktemp)
+          if [ -f repo-src/CHANGELOG.md ]; then
+            awk -v v="$VERSION" '
+              /^## / { if (found) exit; t=$2; gsub(/[\[\]]/, "", t); if (t == v) { found=1; next } }
+              found { print }' repo-src/CHANGELOG.md \
+              | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' | sed '/./,$!d' > "$changelog"
+          fi
+          if [ -s "$changelog" ]; then
+            echo "Release description: CHANGELOG.md section ${VERSION}"
+            echo "Release description: CHANGELOG.md section \`${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice::No section for ${VERSION} in CHANGELOG.md; using the default release description."
+            echo "Release description: default (no CHANGELOG.md section for ${VERSION})" >> "$GITHUB_STEP_SUMMARY"
+          fi
           {
             echo "## CachyOS Hyprland ISO v${VERSION}"
             echo ""
-            echo "Unofficial CachyOS live ISO with a Hyprland desktop instead of KDE Plasma."
+            if [ -s "$changelog" ]; then
+              echo "### What's new"
+              echo ""
+              cat "$changelog"
+            else
+              echo "Unofficial CachyOS live ISO with a Hyprland desktop instead of KDE Plasma."
+            fi
             echo ""
             echo "| | |"
             echo "|---|---|"
