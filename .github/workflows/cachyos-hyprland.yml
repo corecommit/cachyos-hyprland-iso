@@ -108,7 +108,8 @@ jobs:
 
       - name: Compute cache key
         id: cachekey
-        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+        # Weekly (ISO year-week) so a new multi-GB cache is made once a week, not daily.
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
 
       # Package downloads are the slowest network part of the build. The mkarchiso
       # work dir is not cached on purpose (it is rebuilt every time and is huge).
@@ -118,7 +119,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /var/cache/pacman/pkg
-          key: pacman-pkg-v1-${{ steps.cachekey.outputs.day }}
+          key: pacman-pkg-v1-${{ steps.cachekey.outputs.week }}
           restore-keys: |
             pacman-pkg-v1-
 
@@ -1002,7 +1003,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /var/cache/pacman/pkg
-          key: pacman-pkg-v1-${{ steps.cachekey.outputs.day }}
+          key: pacman-pkg-v1-${{ steps.cachekey.outputs.week }}
 
       - name: Upload build log on failure
         if: failure()
@@ -1113,7 +1114,10 @@ jobs:
             echo "| \`$base\` | $size | \`$sum\` |" >> "$GITHUB_STEP_SUMMARY"
           done < <(find cachyos/out -name '*.iso')
 
+      # Release assets do not count toward Actions storage, so only keep an
+      # artifact copy when the ISO is NOT going to a release.
       - name: Upload ISO as Artifact
+        if: steps.meta.outputs.release != 'true' || steps.size.outputs.release_ok != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: cachyos-hyprland-iso
@@ -1121,7 +1125,8 @@ jobs:
             cachyos/out/**/*.iso
             cachyos/out/**/*.sha256
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
+          compression-level: 0   # ISOs are already compressed
 
       - name: Write release notes
         if: steps.meta.outputs.release == 'true'
