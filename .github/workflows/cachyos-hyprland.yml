@@ -421,7 +421,7 @@ jobs:
               follow_mouse = 1,
               touchpad = {
                 natural_scroll = true,
-                ["tap-to-click"] = true,
+                tap_to_click = true,
               },
             },
             misc = {
@@ -469,8 +469,10 @@ jobs:
           hl.bind(mod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
           hl.bind(mod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
 
-          -- Screenshot to clipboard
-          hl.bind("Print", hl.dsp.exec_cmd("sh -c 'grim -g \"$(slurp)\" - | wl-copy'"))
+          -- Screenshots: copied to the clipboard and saved to ~/screenshots
+          hl.bind(mod .. " + SHIFT + S", hl.dsp.exec_cmd("sh ~/.config/hypr/screenshot.sh"))
+          hl.bind("Print", hl.dsp.exec_cmd("sh ~/.config/hypr/screenshot.sh"))
+          hl.bind(mod .. " + Print", hl.dsp.exec_cmd("sh ~/.config/hypr/screenshot.sh full"))
 
           -- Media keys
           hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
@@ -650,14 +652,14 @@ jobs:
               ;;
             "Screenshot: area to file")
               sleep 0.3
-              mkdir -p "$HOME/Pictures"
-              f="$HOME/Pictures/shot-$(date +%Y%m%d-%H%M%S).png"
+              mkdir -p "$HOME/screenshots"
+              f="$HOME/screenshots/shot-$(date +%Y%m%d-%H%M%S).png"
               grim -g "$(slurp)" "$f" && notify "Screenshot saved" "$f"
               ;;
             "Screenshot: full screen to file")
               sleep 0.3
-              mkdir -p "$HOME/Pictures"
-              f="$HOME/Pictures/shot-$(date +%Y%m%d-%H%M%S).png"
+              mkdir -p "$HOME/screenshots"
+              f="$HOME/screenshots/shot-$(date +%Y%m%d-%H%M%S).png"
               grim "$f" && notify "Screenshot saved" "$f"
               ;;
             "Clipboard: History")
@@ -709,6 +711,24 @@ jobs:
             "System: Shut down") systemctl poweroff ;;
           esac
           WBPALETTE
+
+          cat > "$CONF/hypr/screenshot.sh" <<'SHOTSH'
+          #!/bin/sh
+          # Super+Shift+S (or Print): drag an area, it is copied to the clipboard and
+          # saved to ~/screenshots/. "screenshot.sh full" captures the whole screen.
+          dir="$HOME/screenshots"
+          mkdir -p "$dir"
+          f="$dir/screenshot-$(date +%Y%m%d-%H%M%S).png"
+          if [ "${1:-}" = "full" ]; then
+            grim "$f" || exit 1
+          else
+            region=$(slurp) || exit 0
+            grim -g "$region" "$f" || exit 1
+          fi
+          wl-copy --type image/png < "$f"
+          command -v notify-send >/dev/null 2>&1 && notify-send -t 2500 "Screenshot saved" "$f"
+          exit 0
+          SHOTSH
 
           cat > "$CONF/kitty/kitty.conf" <<'KITTYCONF'
           shell fish
@@ -809,6 +829,36 @@ jobs:
             "$SYSD/multi-user.target.wants/NetworkManager.service"
           ln -sf /usr/lib/systemd/system/NetworkManager-dispatcher.service \
             "$SYSD/dbus-org.freedesktop.nm-dispatcher.service"
+
+          # 6. mkarchiso deletes the pacman sync databases from the image, so every
+          #    `pacman -S` needed a manual `pacman -Sy` first. Fetch them in the
+          #    background once the network is up (retries for ~10 minutes, never
+          #    blocks boot). Without a network connection you still need `-Sy` by hand.
+          cat > "$AIROOT/etc/pacman-live-sync.sh" <<'SYNCSH'
+          #!/bin/sh
+          i=0
+          while [ "$i" -lt 60 ]; do
+            pacman -Sy --noconfirm && exit 0
+            i=$((i + 1))
+            sleep 10
+          done
+          exit 1
+          SYNCSH
+          cat > "$SYSD/pacman-live-sync.service" <<'SYNCUNIT'
+          [Unit]
+          Description=Sync pacman databases once the network is up (live ISO)
+          After=NetworkManager.service pacman-init.service
+          Wants=NetworkManager.service
+
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh /etc/pacman-live-sync.sh
+
+          [Install]
+          WantedBy=multi-user.target
+          SYNCUNIT
+          ln -sf /etc/systemd/system/pacman-live-sync.service \
+            "$SYSD/multi-user.target.wants/pacman-live-sync.service"
 
       - name: Patch Boot Entries
         run: |
@@ -912,14 +962,17 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
-          for sh_file in palette.sh; do
+          for sh_file in palette.sh screenshot.sh; do
             if ! sh -n "cachyos/archiso/airootfs/etc/skel/.config/hypr/$sh_file"; then
               echo "VERIFY FAIL: $sh_file has a shell syntax error" >&2; fail=1
             fi
           done
+          if ! grep -q 'SHIFT + S.*screenshot\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: Super+Shift+S is not bound to the screenshot script" >&2; fail=1
+          fi
           if ! grep -q 'SPACE.*palette\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: Super+Space is not bound to the command palette" >&2; fail=1
           fi
@@ -934,6 +987,10 @@ jobs:
           fi
           [ -f cachyos/archiso/airootfs/etc/systemd/system/drm-module-load.target.d/zz-slow-vm.conf ] \
             || { echo "VERIFY FAIL: slow-VM drop-ins missing" >&2; fail=1; }
+          [ -L cachyos/archiso/airootfs/etc/systemd/system/multi-user.target.wants/pacman-live-sync.service ] \
+            || { echo "VERIFY FAIL: pacman-live-sync not enabled" >&2; fail=1; }
+          sh -n cachyos/archiso/airootfs/etc/pacman-live-sync.sh \
+            || { echo "VERIFY FAIL: pacman-live-sync.sh syntax error" >&2; fail=1; }
           [ -L cachyos/archiso/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager.service ] \
             || { echo "VERIFY FAIL: NetworkManager not enabled" >&2; fail=1; }
           if grep -rIn 'linux-cachyos-lts' cachyos/archiso; then
