@@ -214,7 +214,33 @@ jobs:
             bluez bluez-utils thunar
             swaybg brightnessctl otf-font-awesome
             kitty fish fastfetch brave-bin nano
-            cliphist libnotify zram-generator socat
+            cliphist libnotify
+            # xdg-*: creates ~/Documents ~/Downloads; xdg-open for thunar/brave
+            xdg-user-dirs xdg-utils
+            # hypridle: auto-dim/blank/suspend
+            hypridle
+            # wl-clip-persist: clipboard survives the source app closing
+            wl-clip-persist
+            # swappy: annotate grim screenshots
+            swappy
+            # pavucontrol: GUI audio mixer / device selection / mic test
+            pavucontrol
+            # mousepad: lightweight GUI text editor
+            mousepad
+            # imv: image viewer for ~/screenshots
+            imv
+            # btop: system monitor
+            btop
+            # file-roller + thunar-archive-plugin: open archives from thunar
+            file-roller thunar-archive-plugin
+            # nm-connection-editor: WiFi/Ethernet GUI (nmtui is TUI-only)
+            nm-connection-editor
+            # zenity: first-run shortcuts popup
+            zenity
+            # curl: first-boot timezone autodetect
+            curl
+            # noto-fonts-emoji: emoji glyphs (biggest single addition, ~8 MB)
+            noto-fonts-emoji
           )
 
           REMOVE=(
@@ -262,7 +288,7 @@ jobs:
               wpa_supplicant mkinitcpio mkinitcpio-archiso linux-cachyos \
               linux-cachyos-nvidia-open nvidia-utils mesa \
               xdg-desktop-portal-hyprland hyprpolkitagent bluez bluez-utils \
-              brave-bin kitty thunar nano grim slurp socat greetd greetd-tuigreet \
+              brave-bin kitty thunar nano grim slurp greetd greetd-tuigreet \
               sof-firmware linux-firmware grub efibootmgr chwd polkit \
               cryptsetup lvm2 btrfs-progs e2fsprogs syslinux; do
             if ! grep -qxF "$pkg" "$PKG_LIST"; then
@@ -351,7 +377,7 @@ jobs:
 
           # ---- Hyprland "rice" (waybar, kitty, fish, wallpaper) + size trims ----
           CONF="$AIROOT/etc/skel/.config"
-          mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/gtk-3.0" "$CONF/gtk-4.0"
+          mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/mako" "$CONF/gtk-3.0" "$CONF/gtk-4.0"
 
           # Wallpaper: soft dark-navy glow, generated here (pure python, ~few hundred KB)
           cat > /tmp/mkwall.py <<'PYWALL'
@@ -402,10 +428,12 @@ jobs:
             hl.exec_cmd("systemctl --user start hyprpolkitagent")
             hl.exec_cmd("swaybg -i ~/.config/hypr/wallpaper.png -m fill")
             hl.exec_cmd("waybar")
-            hl.exec_cmd("sh ~/.config/hypr/ws-watch.sh")
             hl.exec_cmd("mako")
             hl.exec_cmd("wl-paste --type text --watch cliphist store")
             hl.exec_cmd("wl-paste --type image --watch cliphist store")
+            -- after mako: both scripts show notifications
+            hl.exec_cmd("sh ~/.config/hypr/tz-setup.sh")
+            hl.exec_cmd("sh ~/.config/hypr/first-run.sh &")
           end)
 
           hl.config({
@@ -426,7 +454,7 @@ jobs:
             },
             animations = { enabled = true },
             input = {
-              kb_layout = "us",
+              kb_layout = "us,de,fr,es",
               follow_mouse = 1,
               touchpad = {
                 natural_scroll = true,
@@ -444,16 +472,30 @@ jobs:
           hl.animation({ leaf = "fade",       enabled = true, speed = 3, bezier = "default" })
           hl.animation({ leaf = "workspaces", enabled = true, speed = 3, bezier = "default", style = "slide" })
 
+          -- Window rules: float + center the first-run / cheatsheet zenity window.
+          -- The Lua rule API name differs between Hyprland versions (window_rule vs
+          -- windowrule); pick whichever exists and pcall it so a mismatch can never
+          -- break the config (zenity then just opens tiled; it is still usable).
+          local window_rule = hl.window_rule or hl.windowrule
+          if window_rule then
+            pcall(window_rule, {
+              name  = "zenity-float",
+              match = { class = "zenity" },
+              float = true,
+              center = true,
+            })
+          end
 
           -- Apps and session
           hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd(term))
           hl.bind(mod .. " + D",      hl.dsp.exec_cmd(menu))
           hl.bind(mod .. " + SPACE",  hl.dsp.exec_cmd("sh ~/.config/hypr/palette.sh"))
+          hl.bind(mod .. " + ALT + SPACE", hl.dsp.exec_cmd("sh ~/.config/hypr/kb-switch.sh"))
           hl.bind(mod .. " + E",      hl.dsp.exec_cmd(files))
           hl.bind(mod .. " + B",      hl.dsp.exec_cmd("brave"))
           hl.bind(mod .. " + L",      hl.dsp.exec_cmd("hyprlock"))
           hl.bind(mod .. " + X",      hl.dsp.exec_cmd("sh ~/.config/hypr/power.sh"))
-          hl.bind(mod .. " + F1",     hl.dsp.exec_cmd("kitty -e less ~/.config/hypr/hyprland.lua"))
+          hl.bind(mod .. " + F1",     hl.dsp.exec_cmd("sh ~/.config/hypr/cheatsheet.sh"))
           hl.bind(mod .. " + Q",      hl.dsp.window.close())
           hl.bind(mod .. " + SHIFT + R", hl.dsp.exec_cmd("hyprctl reload"))
           hl.bind(mod .. " + SHIFT + E", hl.dsp.exit())
@@ -509,16 +551,37 @@ jobs:
             "margin-right": 12,
             "spacing": 6,
             "modules-left": ["custom/launcher", "custom/separator", "hyprland/window"],
-            "modules-center": ["custom/ws1", "custom/ws2", "custom/ws3", "custom/ws4", "custom/ws5"],
-            "modules-right": ["tray", "network", "pulseaudio", "battery", "custom/separator2", "clock", "custom/power"],
+            "modules-center": ["hyprland/workspaces"],
+            "modules-right": ["idle_inhibitor", "tray", "network", "pulseaudio", "backlight",
+                              "battery", "cpu", "memory", "hyprland/language",
+                              "custom/separator2", "clock", "custom/power"],
             "custom/launcher": { "format": " ", "tooltip": false, "on-click": "wofi --show drun", "on-click-right": "sh ~/.config/hypr/palette.sh" },
             "custom/separator": { "format": "", "tooltip": false },
             "custom/separator2": { "format": "", "tooltip": false },
-            "custom/ws1": { "exec": "sh ~/.config/hypr/ws.sh 1", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 1" },
-            "custom/ws2": { "exec": "sh ~/.config/hypr/ws.sh 2", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 2" },
-            "custom/ws3": { "exec": "sh ~/.config/hypr/ws.sh 3", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 3" },
-            "custom/ws4": { "exec": "sh ~/.config/hypr/ws.sh 4", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 4" },
-            "custom/ws5": { "exec": "sh ~/.config/hypr/ws.sh 5", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 5" },
+            "hyprland/workspaces": {
+              "format": "{name}",
+              "on-click": "activate",
+              "sort-by-number": true,
+              "persistent-workspaces": { "*": 9 }
+            },
+            "idle_inhibitor": {
+              "format": "{icon}",
+              "format-icons": { "activated": "\uf186", "deactivated": "\uf185" },
+              "tooltip": false
+            },
+            "backlight": {
+              "format": "\uf185  {percent}%",
+              "tooltip": false,
+              "on-scroll-up": "brightnessctl set 5%+",
+              "on-scroll-down": "brightnessctl set 5%-"
+            },
+            "cpu": { "format": "\uf0e4  {usage}%", "interval": 3 },
+            "memory": { "format": "\uf2db  {percentage}%", "interval": 5 },
+            "hyprland/language": {
+              "format": "{}",
+              "tooltip": false,
+              "on-click": "sh ~/.config/hypr/kb-switch.sh"
+            },
             "hyprland/window": { "format": "{title}", "max-length": 45, "rewrite": { "": " " } },
             "clock": { "format": "{:%H:%M}", "format-alt": "{:%A  %d %b %Y}", "tooltip-format": "<tt>{calendar}</tt>" },
             "tray": { "spacing": 10, "icon-size": 16 },
@@ -528,13 +591,14 @@ jobs:
               "format-disconnected": "\uf071  offline",
               "tooltip-format-wifi": "{ifname}  {ipaddr}\n{signalStrength}%  {frequency} GHz",
               "tooltip-format-ethernet": "{ifname}  {ipaddr}",
-              "on-click": "kitty -e nmtui"
+              "on-click": "nm-connection-editor"
             },
             "pulseaudio": {
               "format": "{icon}  {volume}%",
               "format-muted": "\uf6a9  muted",
               "format-icons": { "default": ["\uf026", "\uf027", "\uf028"] },
-              "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+              "on-click": "pavucontrol",
+              "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
               "scroll-step": 2
             },
             "battery": {
@@ -577,6 +641,7 @@ jobs:
 
           /* ── Module pills ── */
           #custom-launcher, #window, #tray, #network, #pulseaudio,
+          #idle_inhibitor, #backlight, #cpu, #memory, #language,
           #battery, #clock, #custom-power, #custom-separator, #custom-separator2 {
             background: @bg;
             border: 1px solid @border_dim;
@@ -621,30 +686,25 @@ jobs:
             min-width: 0;
           }
 
-          /* ── Workspace dots ── */
-          #custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4, #custom-ws5 {
+          /* ── Workspaces ── */
+          #workspaces button {
             background: @bg;
             color: @text_dim;
             border: 1px solid @border_dim;
             border-radius: 10px;
-            padding: 4px 0;
-            min-width: 30px;
-            font-size: 12px;
-            font-weight: 600;
+            padding: 2px 10px;
+            margin: 0 1px;
+            min-width: 24px;
             transition: all 200ms ease;
           }
-          #custom-ws1.occupied, #custom-ws2.occupied, #custom-ws3.occupied,
-          #custom-ws4.occupied, #custom-ws5.occupied {
-            color: @text;
-            border-color: @border_bright;
+          #workspaces button.occupied {
+            color: @text; border-color: @border_bright;
           }
-          #custom-ws1.active, #custom-ws2.active, #custom-ws3.active,
-          #custom-ws4.active, #custom-ws5.active {
-            background: @accent;
-            color: #0a0a12;
-            border-color: @accent;
+          #workspaces button.active {
+            background: @accent; color: #0a0a12; border-color: @accent;
             box-shadow: 0 0 10px rgba(180, 190, 254, 0.35);
           }
+          #workspaces button.urgent { color: @crit; }
 
           /* ── Clock ── */
           #clock {
@@ -675,32 +735,6 @@ jobs:
             border-color: rgba(243, 139, 168, 0.3);
           }
           WBCSS
-
-          cat > "$CONF/hypr/ws.sh" <<'WSSH'
-          #!/bin/sh
-          # Prints waybar JSON for workspace $1: active / occupied / empty.
-          n="$1"
-          cur=$(hyprctl activeworkspace | awk 'NR==1 {print $3}')
-          w=$(hyprctl workspaces | awk -v n="$n" '/^workspace ID/ {f=($3==n)} f && $1=="windows:" {print $2; exit}')
-          if [ "$cur" = "$n" ]; then cls=active
-          elif [ "${w:-0}" -gt 0 ] 2>/dev/null; then cls=occupied
-          else cls=empty; fi
-          printf '{"text":"%s","class":"%s"}\n' "$n" "$cls"
-          WSSH
-
-          cat > "$CONF/hypr/ws-watch.sh" <<'WSWATCH'
-          #!/bin/sh
-          # One tiny listener: when a workspace/window event happens, tell waybar (signal 8)
-          # to refresh the workspace buttons. Needs socat.
-          sock="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
-          sleep 3
-          socat -U - "UNIX-CONNECT:$sock" | while read -r line; do
-            case "$line" in
-              workspace*|focusedmon*|createworkspace*|destroyworkspace*|openwindow*|closewindow*|movewindow*)
-                pkill -RTMIN+8 -x waybar ;;
-            esac
-          done
-          WSWATCH
 
           cat > "$CONF/hypr/power.sh" <<'POWERSH'
           #!/bin/sh
@@ -989,6 +1023,10 @@ jobs:
           cat > "$CONF/fish/config.fish" <<'FISHCONF'
           function fish_greeting
               fastfetch
+              echo
+              set_color 8a8a8a
+              echo "  Super+D apps · Super+Space commands · Super+F1 cheatsheet · Super+X power"
+              set_color normal
           end
           function fish_prompt
               set_color 8a8a8a
@@ -998,6 +1036,257 @@ jobs:
               set_color normal
           end
           FISHCONF
+
+          # ---- First boot: timezone autodetect (the live ISO boots in UTC) ----
+          cat > "$CONF/hypr/tz-setup.sh" <<'TZSETUP'
+          #!/bin/sh
+          # Set timezone from geolocation on first boot.
+          FLAG="$HOME/.config/hypr/.tz-set-done"
+          [ -f "$FLAG" ] && exit 0
+          tz=$(curl -sf --max-time 5 https://ipinfo.io/timezone 2>/dev/null || true)
+          if [ -n "$tz" ] && [ -f "/usr/share/zoneinfo/$tz" ]; then
+            sudo timedatectl set-timezone "$tz" 2>/dev/null && \
+              notify-send -t 5000 "Timezone set to $tz" \
+                "Change with: sudo timedatectl set-timezone <zone>"
+            touch "$FLAG"
+          else
+            notify-send -t 10000 "Could not auto-detect timezone" \
+              "Run: sudo timedatectl set-timezone <zone>"
+          fi
+          TZSETUP
+
+          # tz-setup.sh needs passwordless sudo. Add a drop-in only if upstream's
+          # sudoers files do not already grant NOPASSWD (heuristic).
+          if grep -rqs 'NOPASSWD' "$AIROOT/etc/sudoers" "$AIROOT/etc/sudoers.d"; then
+            echo "passwordless sudo already granted upstream; no 10-live drop-in"
+          else
+            mkdir -p "$AIROOT/etc/sudoers.d"
+            printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$LIVE_USER" > "$AIROOT/etc/sudoers.d/10-live"
+            # sudo ignores drop-ins that are not mode 0440
+            while IFS= read -r pd; do
+              sedx -o "$pd" '/^file_permissions=(/a\["/etc/sudoers.d/10-live"]="0:0:440"'
+            done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
+          fi
+
+
+          # ---- Keyboard layout switching (Super+Alt+Space, or click the bar's layout) ----
+          cat > "$CONF/hypr/kb-switch.sh" <<'KBSWITCH'
+          #!/bin/sh
+          # Cycle keyboard layout across configured layouts (us,de,fr,es).
+          # switchxkblayout keeps the full layout list; re-setting input:kb_layout would
+          # drop the other layouts after the first press and break the cycle and the bar.
+          hyprctl switchxkblayout all next >/dev/null
+          cur=$(hyprctl devices -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((k.get("active_keymap", "") for k in d["keyboards"] if k.get("main")), ""))' 2>/dev/null)
+          notify-send -t 2000 "Keyboard: ${cur:-layout switched}"
+          KBSWITCH
+
+
+          # ---- First-run experience: cheatsheet, first-run popup, motd, README ----
+          mkdir -p "$AIROOT/usr/share/cachyos-hyprland"
+          cat > "$AIROOT/usr/share/cachyos-hyprland/cheatsheet.txt" <<'CHEATTXT'
+          ═══════════════════════════════════════════════════════════════
+            CACHYOS HYPRLAND — KEYBOARD SHORTCUTS
+          ═══════════════════════════════════════════════════════════════
+
+            LAUNCH
+              Super + Return       Terminal (kitty)
+              Super + D            Application launcher (wofi)
+              Super + Space        Command palette
+              Super + B            Browser (brave)
+              Super + E            Files (thunar)
+              Super + F1           This cheatsheet
+
+            WINDOWS
+              Super + Q            Close window
+              Super + V            Toggle floating
+              Super + F            Toggle fullscreen
+              Super + Arrow keys   Focus window in direction
+              Super + Shift + ←↑↓→ Move window
+              Super + Drag (mouse) Move window
+              Super + Right-drag   Resize window
+
+            WORKSPACES
+              Super + 1..9         Switch to workspace
+              Super + Shift + 1..9 Move window to workspace
+              Super + , / .        Previous / next workspace
+              Super + Scroll       Cycle workspaces
+
+            SYSTEM
+              Super + L            Lock screen
+              Super + X            Power menu
+              Super + Shift + R    Reload Hyprland config
+              Super + Shift + E    Log out
+              Super + Alt + Space  Switch keyboard layout (us/de/fr/es)
+
+            SCREENSHOTS
+              Print                Area → clipboard + ~/screenshots/
+              Super + Print        Full screen → ~/screenshots/
+              Super + Shift + S    Same as Print
+
+            MEDIA
+              Volume / Brightness  Dedicated keys work
+              Super + Space        "Audio:" / "Display:" entries in palette
+
+            WAYBAR
+              Left-click WiFi      Network editor
+              Left-click volume    Audio mixer
+              Right-click launcher Command palette
+
+          ───────────────────────────────────────────────────────────────
+            Full docs: https://wiki.hypr.land/
+          ═══════════════════════════════════════════════════════════════
+          CHEATTXT
+
+          cat > "$CONF/hypr/cheatsheet.sh" <<'CHEATSH'
+          #!/bin/sh
+          # Show the keyboard shortcuts in a floating GTK window.
+          # (text-info shows plain text, so no --no-markup: not every zenity accepts it
+          # there, and with `exec` a rejected flag would skip the kitty fallback.)
+          CHEAT=/usr/share/cachyos-hyprland/cheatsheet.txt
+          if command -v zenity >/dev/null 2>&1; then
+            exec zenity --text-info \
+              --title="CachyOS Hyprland — Keyboard Shortcuts" \
+              --filename="$CHEAT" --width=760 --height=680 \
+              --font="Noto Sans Mono 10"
+          fi
+          exec kitty -o confirm_os_window_close=0 -T "Shortcuts" -e less "$CHEAT"
+          CHEATSH
+
+          cat > "$CONF/hypr/first-run.sh" <<'FIRSTRUN'
+          #!/bin/sh
+          # Runs once on first login, then never again.
+          FLAG="$HOME/.config/hypr/.first-run-done"
+          [ -f "$FLAG" ] && exit 0
+          sh "$HOME/.config/hypr/cheatsheet.sh"
+          touch "$FLAG"
+          FIRSTRUN
+
+          cat > "$AIROOT/etc/motd" <<'MOTD'
+          ╭──────────────────────────────────────────────────╮
+          │  CachyOS Hyprland Live ISO                       │
+          │                                                  │
+          │  Try before you install:                         │
+          │    sudo calamares                                │
+          │                                                  │
+          │  Everything runs in RAM (toram). Changes are     │
+          │  lost on reboot.                                 │
+          │                                                  │
+          │  Keyboard: Super+F1 · Power menu: Super+X        │
+          ╰──────────────────────────────────────────────────╯
+          MOTD
+
+          # mkarchiso copies this to the ISO root (readable from another machine).
+          cat > cachyos/archiso/README.txt <<'ISOREADME'
+          CachyOS Hyprland Live ISO
+          =========================
+
+          What this is
+            An unofficial CachyOS live ISO with a Hyprland desktop instead of
+            KDE Plasma. Try it, then run `sudo calamares` to install.
+
+          Requirements
+            - 4 GB RAM minimum (8 GB recommended for the toram boot option)
+            - x86_64 UEFI or BIOS
+            - Disable Secure Boot
+
+          Boot options
+            - Default: reads from USB, changes lost on reboot
+            - "toram": loads everything into RAM, frees the USB (~5 GB RAM needed)
+            - "safe mode": for GPUs that fail with the default driver
+
+          After boot
+            Super+D       app launcher
+            Super+Space   command palette
+            Super+F1      keyboard shortcuts
+            Super+X       power menu
+
+          Verify download
+            sha256sum -c <file>.iso.sha256
+
+          Not an official CachyOS release.
+          ISOREADME
+
+
+          # ---- idle, lock screen, notifications ----
+          cat > "$CONF/hypr/hypridle.conf" <<'HYPRIDLE'
+          general {
+              before_sleep_cmd = hyprlock
+              after_sleep_cmd = hyprctl dispatch dpms on
+          }
+          listener {
+              timeout = 150
+              on-timeout = brightnessctl -s set 10%
+              on-resume = brightnessctl -r
+          }
+          listener {
+              timeout = 300
+              on-timeout = hyprctl dispatch dpms off
+              on-resume = hyprctl dispatch dpms on
+          }
+          listener {
+              timeout = 1200
+              on-timeout = systemctl suspend
+          }
+          HYPRIDLE
+
+          # The live user has no password, so Enter on an empty field unlocks.
+          cat > "$CONF/hypr/hyprlock.conf" <<'HYPRLOCK'
+          background {
+              monitor =
+              path = ~/.config/hypr/wallpaper.png
+              blur_passes = 2
+              blur_size = 8
+          }
+          input-field {
+              monitor =
+              size = 300, 50
+              outline_thickness = 2
+              dots_size = 0.25
+              outer_color = rgba(180, 190, 254, 0.8)
+              inner_color = rgba(10, 10, 18, 0.9)
+              font_color = rgb(224, 224, 224)
+              placeholder_text = Press Enter to unlock
+              position = 0, -20
+              halign = center
+              valign = center
+          }
+          label {
+              monitor =
+              text = $TIME
+              color = rgba(224, 224, 224, 1.0)
+              font_size = 96
+              font_family = Noto Sans
+              position = 0, 120
+              halign = center
+              valign = center
+          }
+          label {
+              monitor =
+              text = cmd[update:60000] date +"%A, %d %B"
+              color = rgba(180, 190, 254, 1.0)
+              font_size = 20
+              font_family = Noto Sans
+              position = 0, 20
+              halign = center
+              valign = center
+          }
+          HYPRLOCK
+
+          cat > "$CONF/mako/config" <<'MAKOCONF'
+          font=Noto Sans 11
+          background-color=#0a0a12ee
+          text-color=#e0e0e0
+          border-color=#b4befe
+          border-size=1
+          border-radius=10
+          padding=12
+          margin=10
+          anchor=bottom-right
+          default-timeout=5000
+          max-visible=3
+          width=360
+          height=140
+          MAKOCONF
 
           # Size: skip docs/man/info when the image is built.
           pc_found=0
@@ -1106,37 +1395,16 @@ jobs:
 
           # 7. Make the most of RAM in the live session (the live filesystem itself
           #    lives in RAM, so every MB saved here is a MB for your apps).
-          #    a) zram: compressed swap inside RAM (same setup CachyOS uses on installs):
-          #       size limit = RAM, zstd compression, top swap priority. The limit is
-          #       not reserved memory; RAM is only used for pages actually swapped,
-          #       and zstd typically stores them at 2-3x smaller.
-          cat > "$AIROOT/etc/systemd/zram-generator.conf" <<'ZRAMCONF'
-          [zram0]
-          zram-size = ram
-          compression-algorithm = zstd
-          swap-priority = 100
-          fs-type = swap
-          ZRAMCONF
-          #    b) Kernel tuning that suits zram (prefer compressed swap over dropping
-          #       file cache; no read-ahead since zram is not a spinning disk).
-          mkdir -p "$AIROOT/etc/sysctl.d"
-          cat > "$AIROOT/etc/sysctl.d/99-live-ram.conf" <<'SYSCTLCONF'
-          vm.swappiness = 180
-          vm.page-cluster = 0
-          vm.watermark_boost_factor = 0
-          vm.watermark_scale_factor = 125
-          SYSCTLCONF
-          #       zswap would compress a second time on top of zram, so switch it off.
-          mkdir -p "$AIROOT/etc/tmpfiles.d"
-          printf 'w- /sys/module/zswap/parameters/enabled - - - - 0\n' \
-            > "$AIROOT/etc/tmpfiles.d/99-live-zswap-off.conf"
-          #    c) Logs stay in RAM and are capped; no core dumps are stored.
+          #    This is a toram ISO: tune RAM usage (logs, cache, timers) but do NOT
+          #    add swap (zram/zswap). The whole filesystem is already in RAM, so
+          #    swap would only move RAM into more RAM.
+          #    a) Logs stay in RAM and are capped; no core dumps are stored.
           mkdir -p "$AIROOT/etc/systemd/journald.conf.d" "$AIROOT/etc/systemd/coredump.conf.d"
           printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=32M\n' \
             > "$AIROOT/etc/systemd/journald.conf.d/50-live-cap.conf"
           printf '[Coredump]\nStorage=none\nProcessSizeMax=0\n' \
             > "$AIROOT/etc/systemd/coredump.conf.d/50-live-none.conf"
-          #    d) Downloaded .pkg files would sit in RAM; delete them after each
+          #    b) Downloaded .pkg files would sit in RAM; delete them after each
           #       pacman install/upgrade (the package databases are kept).
           mkdir -p "$AIROOT/etc/pacman.d/hooks"
           cat > "$AIROOT/etc/pacman.d/hooks/zz-live-clean-cache.hook" <<'CLEANHOOK'
@@ -1151,7 +1419,7 @@ jobs:
           When = PostTransaction
           Exec = /usr/bin/find /var/cache/pacman/pkg -maxdepth 1 -type f -delete
           CLEANHOOK
-          #    e) Background timers that only make sense on an installed system.
+          #    c) Background timers that only make sense on an installed system.
           #       (Masking a unit that is not installed is harmless.)
           for t in man-db.timer shadow.timer archlinux-keyring-wkd-sync.timer \
                    plocate-updatedb.timer fstrim.timer; do
@@ -1260,10 +1528,12 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/hypr/ws.sh etc/skel/.config/hypr/ws-watch.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/wofi/power.css etc/skel/.config/brave-flags.conf etc/systemd/zram-generator.conf etc/sysctl.d/99-live-ram.conf etc/tmpfiles.d/99-live-zswap-off.conf etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/wofi/power.css etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
-          for sh_file in palette.sh screenshot.sh power.sh ws.sh ws-watch.sh; do
+          [ -s cachyos/archiso/README.txt ] \
+            || { echo "VERIFY FAIL: missing/empty archiso/README.txt" >&2; fail=1; }
+          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh; do
             if ! sh -n "cachyos/archiso/airootfs/etc/skel/.config/hypr/$sh_file"; then
               echo "VERIFY FAIL: $sh_file has a shell syntax error" >&2; fail=1
             fi
@@ -1273,6 +1543,16 @@ jobs:
           fi
           if ! grep -q 'SPACE.*palette\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: Super+Space is not bound to the command palette" >&2; fail=1
+          fi
+          if ! grep -q 'ALT + SPACE.*kb-switch\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: Super+Alt+Space is not bound to kb-switch.sh" >&2; fail=1
+          fi
+          if grep -q 'ws-watch\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: hyprland.lua still starts ws-watch.sh" >&2; fail=1
+          fi
+          if ! grep -q 'hyprland/workspaces' cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc \
+             || grep -q 'custom/ws1' cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc; then
+            echo "VERIFY FAIL: waybar must use hyprland/workspaces and no custom/ws1" >&2; fail=1
           fi
           if ! luac -p cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: hyprland.lua has a Lua syntax error" >&2; fail=1
@@ -1512,8 +1792,6 @@ jobs:
             echo "Release description: default (no CHANGELOG.md section for ${VERSION})" >> "$GITHUB_STEP_SUMMARY"
           fi
           {
-            echo "## CachyOS Hyprland ISO v${VERSION}"
-            echo ""
             if [ -s "$changelog" ]; then
               echo "### What's new"
               echo ""
