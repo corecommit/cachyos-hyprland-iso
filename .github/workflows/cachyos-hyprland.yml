@@ -503,76 +503,177 @@ jobs:
           {
             "layer": "top",
             "position": "top",
-            "height": 32,
-            "margin-top": 6,
-            "margin-left": 10,
-            "margin-right": 10,
+            "height": 38,
+            "margin-top": 8,
+            "margin-left": 12,
+            "margin-right": 12,
             "spacing": 6,
-            "modules-left": ["custom/launcher", "hyprland/window"],
+            "modules-left": ["custom/launcher", "custom/separator", "hyprland/window"],
             "modules-center": ["custom/ws1", "custom/ws2", "custom/ws3", "custom/ws4", "custom/ws5"],
-            "modules-right": ["tray", "network", "pulseaudio", "battery", "memory", "clock", "custom/power"],
-            "custom/launcher": { "format": "\uf002", "tooltip": false, "on-click": "wofi --show drun", "on-click-right": "sh ~/.config/hypr/palette.sh" },
-            "custom/ws1": { "exec": "sh ~/.config/hypr/ws.sh 1", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 1 })'; hyprctl dispatch workspace 1" },
-            "custom/ws2": { "exec": "sh ~/.config/hypr/ws.sh 2", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 2 })'; hyprctl dispatch workspace 2" },
-            "custom/ws3": { "exec": "sh ~/.config/hypr/ws.sh 3", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 3 })'; hyprctl dispatch workspace 3" },
-            "custom/ws4": { "exec": "sh ~/.config/hypr/ws.sh 4", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 4 })'; hyprctl dispatch workspace 4" },
-            "custom/ws5": { "exec": "sh ~/.config/hypr/ws.sh 5", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch 'hl.dsp.focus({ workspace = 5 })'; hyprctl dispatch workspace 5" },
-            "hyprland/window": { "format": "{title}", "max-length": 40 },
-            "clock": { "format": "{:%H:%M  %a %d %b}", "tooltip": false },
-            "memory": { "format": "\uf538  {used:0.1f} GiB" },
-            "tray": { "spacing": 8 },
+            "modules-right": ["tray", "network", "pulseaudio", "battery", "custom/separator2", "clock", "custom/power"],
+            "custom/launcher": { "format": " ", "tooltip": false, "on-click": "wofi --show drun", "on-click-right": "sh ~/.config/hypr/palette.sh" },
+            "custom/separator": { "format": "", "tooltip": false },
+            "custom/separator2": { "format": "", "tooltip": false },
+            "custom/ws1": { "exec": "sh ~/.config/hypr/ws.sh 1", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 1" },
+            "custom/ws2": { "exec": "sh ~/.config/hypr/ws.sh 2", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 2" },
+            "custom/ws3": { "exec": "sh ~/.config/hypr/ws.sh 3", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 3" },
+            "custom/ws4": { "exec": "sh ~/.config/hypr/ws.sh 4", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 4" },
+            "custom/ws5": { "exec": "sh ~/.config/hypr/ws.sh 5", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "hyprctl dispatch workspace 5" },
+            "hyprland/window": { "format": "{title}", "max-length": 45, "rewrite": { "": " " } },
+            "clock": { "format": "{:%H:%M}", "format-alt": "{:%A  %d %b %Y}", "tooltip-format": "<tt>{calendar}</tt>" },
+            "tray": { "spacing": 10, "icon-size": 16 },
             "network": {
               "format-wifi": "\uf1eb  {essid}",
-              "format-ethernet": "\uf0ac  wired",
+              "format-ethernet": "\uf0ac  {ifname}",
               "format-disconnected": "\uf071  offline",
-              "tooltip-format": "{ifname}  {ipaddr}",
+              "tooltip-format-wifi": "{ifname}  {ipaddr}\n{signalStrength}%  {frequency} GHz",
+              "tooltip-format-ethernet": "{ifname}  {ipaddr}",
               "on-click": "kitty -e nmtui"
             },
             "pulseaudio": {
               "format": "{icon}  {volume}%",
               "format-muted": "\uf6a9  muted",
-              "format-icons": { "default": ["\uf027", "\uf028"] },
-              "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
+              "format-icons": { "default": ["\uf026", "\uf027", "\uf028"] },
+              "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+              "scroll-step": 2
             },
             "battery": {
               "format": "{icon}  {capacity}%",
               "format-charging": "\uf0e7  {capacity}%",
+              "format-full": "\uf240  full",
               "format-icons": ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"],
-              "states": { "warning": 25, "critical": 10 }
+              "states": { "warning": 25, "critical": 10 },
+              "interval": 30
             },
             "custom/power": { "format": "\uf011", "tooltip": false, "on-click": "sh ~/.config/hypr/power.sh" }
           }
           WBCONF
 
           cat > "$CONF/waybar/style.css" <<'WBCSS'
+          @define-color bg rgba(10, 10, 18, 0.82);
+          @define-color bg_hover rgba(24, 24, 38, 0.92);
+          @define-color border_dim rgba(255, 255, 255, 0.06);
+          @define-color border_bright rgba(255, 255, 255, 0.12);
+          @define-color text #e0e0e0;
+          @define-color text_dim #787878;
+          @define-color accent #b4befe;
+          @define-color accent_dim rgba(180, 190, 254, 0.15);
+          @define-color warn #f9e2af;
+          @define-color crit #f38ba8;
+
           * {
-            font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+            font-family: "Noto Sans", "Font Awesome 6 Free", sans-serif;
             font-size: 13px;
+            font-weight: 500;
             border: none;
             border-radius: 0;
             min-height: 0;
           }
-          window#waybar { background: transparent; color: #e6e6e6; }
-          #custom-launcher, #window, #tray, #network, #pulseaudio, #battery, #memory, #clock, #custom-power {
-            background: #000000;
-            border: 1px solid #2a2a2a;
-            border-radius: 14px;
-            padding: 2px 12px;
+
+          window#waybar {
+            background: transparent;
+            color: @text;
           }
-          #custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4, #custom-ws5 {
-            background: #000000;
-            color: #5a5a5a;
-            border: 1px solid #2a2a2a;
+
+          /* ── Module pills ── */
+          #custom-launcher, #window, #tray, #network, #pulseaudio,
+          #battery, #clock, #custom-power, #custom-separator, #custom-separator2 {
+            background: @bg;
+            border: 1px solid @border_dim;
             border-radius: 12px;
-            padding: 2px 0;
-            min-width: 26px;
+            padding: 4px 14px;
+            margin: 2px 0;
+            transition: all 150ms ease;
           }
-          #custom-ws1.occupied, #custom-ws2.occupied, #custom-ws3.occupied, #custom-ws4.occupied, #custom-ws5.occupied { color: #e6e6e6; }
-          #custom-ws1.active, #custom-ws2.active, #custom-ws3.active, #custom-ws4.active, #custom-ws5.active { background: #ffffff; color: #000000; }
-          window#waybar.empty #window { background: transparent; border-color: transparent; }
-          #battery.warning { color: #f9e2af; }
-          #battery.critical { color: #f38ba8; }
-          #custom-power { color: #f38ba8; }
+
+          #custom-launcher:hover, #window:hover, #network:hover,
+          #pulseaudio:hover, #battery:hover, #clock:hover, #custom-power:hover {
+            background: @bg_hover;
+            border-color: @border_bright;
+          }
+
+          /* ── Launcher icon ── */
+          #custom-launcher {
+            font-size: 15px;
+            padding: 4px 16px;
+            color: @accent;
+          }
+
+          /* ── Invisible separators ── */
+          #custom-separator, #custom-separator2 {
+            background: transparent;
+            border: none;
+            padding: 0 1px;
+            min-width: 0;
+            font-size: 0;
+          }
+
+          /* ── Window title ── */
+          #window {
+            font-weight: 400;
+            color: @text_dim;
+            padding: 4px 16px;
+          }
+          window#waybar.empty #window {
+            background: transparent;
+            border-color: transparent;
+            padding: 0;
+            min-width: 0;
+          }
+
+          /* ── Workspace dots ── */
+          #custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4, #custom-ws5 {
+            background: @bg;
+            color: @text_dim;
+            border: 1px solid @border_dim;
+            border-radius: 10px;
+            padding: 4px 0;
+            min-width: 30px;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 200ms ease;
+          }
+          #custom-ws1.occupied, #custom-ws2.occupied, #custom-ws3.occupied,
+          #custom-ws4.occupied, #custom-ws5.occupied {
+            color: @text;
+            border-color: @border_bright;
+          }
+          #custom-ws1.active, #custom-ws2.active, #custom-ws3.active,
+          #custom-ws4.active, #custom-ws5.active {
+            background: @accent;
+            color: #0a0a12;
+            border-color: @accent;
+            box-shadow: 0 0 10px rgba(180, 190, 254, 0.35);
+          }
+
+          /* ── Clock ── */
+          #clock {
+            font-weight: 600;
+            letter-spacing: 0.5px;
+          }
+
+          /* ── Tray ── */
+          #tray {
+            background: @bg;
+            border: 1px solid @border_dim;
+            border-radius: 12px;
+            padding: 4px 10px;
+            margin: 2px 0;
+          }
+
+          /* ── Status colors ── */
+          #battery.warning { color: @warn; }
+          #battery.critical { color: @crit; }
+          #network.disconnected { color: @warn; }
+          #custom-power {
+            color: @crit;
+            font-size: 14px;
+            padding: 4px 12px;
+          }
+          #custom-power:hover {
+            background: rgba(243, 139, 168, 0.15);
+            border-color: rgba(243, 139, 168, 0.3);
+          }
           WBCSS
 
           cat > "$CONF/hypr/ws.sh" <<'WSSH'
