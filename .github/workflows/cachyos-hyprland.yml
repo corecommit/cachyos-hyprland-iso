@@ -353,7 +353,37 @@ jobs:
           CONF="$AIROOT/etc/skel/.config"
           mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/gtk-3.0" "$CONF/gtk-4.0"
 
-          # Wallpaper: none. swaybg paints the background pure black (see hyprland.lua).
+          # Wallpaper: soft dark-navy glow, generated here (pure python, ~few hundred KB)
+          cat > /tmp/mkwall.py <<'PYWALL'
+          import math, struct, sys, zlib
+          W, H = 960, 540
+          base = (9, 12, 34)
+          blobs = [(0.40, 0.58, 0.20, (170, 140, 70), 0.55),
+                   (0.52, 0.42, 0.15, (80, 80, 190), 0.75),
+                   (0.30, 0.70, 0.12, (120, 100, 60), 0.30)]
+          raw = bytearray()
+          for y in range(H):
+              raw.append(0)
+              fy = y / H
+              for x in range(W):
+                  fx = x / W
+                  r, g, b = base
+                  for cx, cy, rad, col, s in blobs:
+                      dx = (fx - cx) * W / H
+                      dy = fy - cy
+                      w = s * math.exp(-(dx * dx + dy * dy) / (2 * rad * rad))
+                      r += (col[0] - r) * w
+                      g += (col[1] - g) * w
+                      b += (col[2] - b) * w
+                  raw += bytes((int(r), int(g), int(b)))
+          def chunk(t, d):
+              c = struct.pack('>I', len(d)) + t + d
+              return c + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+          png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)) \
+                + chunk(b'IDAT', zlib.compress(bytes(raw), 9)) + chunk(b'IEND', b'')
+          open(sys.argv[1], 'wb').write(png)
+          PYWALL
+          python3 /tmp/mkwall.py "$CONF/hypr/wallpaper.png"
 
           cat > "$CONF/hypr/hyprland.lua" <<'HYPRRICE'
           -- cachyos-hyprland rice
@@ -370,7 +400,7 @@ jobs:
 
           hl.on("hyprland.start", function()
             hl.exec_cmd("systemctl --user start hyprpolkitagent")
-            hl.exec_cmd("swaybg -c '#000000'")
+            hl.exec_cmd("swaybg -i ~/.config/hypr/wallpaper.png -m fill")
             hl.exec_cmd("waybar")
             hl.exec_cmd("sh ~/.config/hypr/ws-watch.sh")
             hl.exec_cmd("mako")
@@ -384,17 +414,17 @@ jobs:
               gaps_out = 10,
               border_size = 2,
               col = {
-                active_border = "rgba(ffffffee)",
-                inactive_border = "rgba(2a2a2aaa)",
+                active_border = "rgba(b4befeee)",
+                inactive_border = "rgba(31324488)",
               },
               layout = "dwindle",
             },
             decoration = {
               rounding = 12,
-              blur = { enabled = false },
+              blur = { enabled = true, size = 5, passes = 2 },
               shadow = { enabled = false },
             },
-            animations = { enabled = false },
+            animations = { enabled = true },
             input = {
               kb_layout = "us",
               follow_mouse = 1,
@@ -409,6 +439,10 @@ jobs:
               force_default_wallpaper = 0,
             },
           })
+
+          hl.animation({ leaf = "windows",    enabled = true, speed = 3, bezier = "default", style = "slide" })
+          hl.animation({ leaf = "fade",       enabled = true, speed = 3, bezier = "default" })
+          hl.animation({ leaf = "workspaces", enabled = true, speed = 3, bezier = "default", style = "slide" })
 
 
           -- Apps and session
