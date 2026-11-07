@@ -195,6 +195,27 @@ jobs:
           mkdir -p cachyos/out
           chown -R builder:builder cachyos
 
+      # anyrun (Super+Space) is not in the Arch or CachyOS repositories, only in the AUR,
+      # so it is built here with makepkg. This step may fail without failing the job: the
+      # ISO is then built without anyrun and Super+Space opens the command palette instead
+      # (see "Add anyrun to the live image").
+      - name: Build anyrun from the AUR (optional)
+        id: anyrun
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          pacman -S --needed --noconfirm rust gtk4-layer-shell
+          sudo -H -u builder bash -euo pipefail -c '
+            rm -rf "$HOME/aur" && mkdir -p "$HOME/aur" && cd "$HOME/aur"
+            git clone --depth 1 https://aur.archlinux.org/anyrun.git
+            cd anyrun
+            makepkg --syncdeps --noconfirm --needed --skippgpcheck
+          '
+          pkg=$(find /home/builder/aur/anyrun -maxdepth 1 -name 'anyrun-*.pkg.tar.*' ! -name '*-debug-*' | sort | head -n1)
+          [ -n "$pkg" ] || { echo "::error::makepkg produced no anyrun package" >&2; exit 1; }
+          echo "Built: $pkg"
+          echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+
       # ------------------------------------------------------------------
       # PATCHES START HERE
       # ------------------------------------------------------------------
@@ -211,11 +232,11 @@ jobs:
             xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
             waybar wofi mako grim slurp wl-clipboard
             qt5-wayland qt6-wayland greetd greetd-tuigreet
-            bluez bluez-utils thunar
+            bluez bluez-utils nautilus
             swaybg brightnessctl otf-font-awesome
             kitty fish fastfetch brave-bin nano
             cliphist libnotify
-            # xdg-*: creates ~/Documents ~/Downloads; xdg-open for thunar/brave
+            # xdg-*: creates ~/Documents ~/Downloads; xdg-open for nautilus/brave
             xdg-user-dirs xdg-utils
             # hypridle: auto-dim/blank/suspend
             hypridle
@@ -231,9 +252,9 @@ jobs:
             imv
             # btop: system monitor
             btop
-            # file-roller + thunar-archive-plugin: open archives from thunar
-            file-roller thunar-archive-plugin
-            # nm-connection-editor: WiFi/Ethernet GUI (nmtui is TUI-only)
+            # file-roller: archive manager (nautilus also extracts/compresses by itself)
+            file-roller
+            # nm-connection-editor: optional WiFi/Ethernet GUI (the bar opens nmtui instead)
             nm-connection-editor
             # zenity: first-run shortcuts popup
             zenity
@@ -241,6 +262,8 @@ jobs:
             curl
             # noto-fonts-emoji: emoji glyphs (biggest single addition, ~8 MB)
             noto-fonts-emoji
+            # matugen: Material You colours from a wallpaper (Super+P)
+            matugen
           )
 
           REMOVE=(
@@ -266,6 +289,7 @@ jobs:
             modemmanager mobile-broadband-provider-info usb_modeswitch
             linux-cachyos-lts linux-cachyos-lts-zfs linux-cachyos-lts-nvidia-open
             linux-cachyos-zfs zfs-utils
+            thunar thunar-archive-plugin
           )
           if [ "$KEEP_INSTALLER" != "true" ]; then
             REMOVE+=( cachyos-calamares-next cachyos-cli-installer-new )
@@ -288,7 +312,7 @@ jobs:
               wpa_supplicant mkinitcpio mkinitcpio-archiso linux-cachyos \
               linux-cachyos-nvidia-open nvidia-utils mesa \
               xdg-desktop-portal-hyprland hyprpolkitagent bluez bluez-utils \
-              brave-bin kitty thunar nano grim slurp greetd greetd-tuigreet \
+              brave-bin kitty nautilus nano grim slurp greetd greetd-tuigreet \
               sof-firmware linux-firmware grub efibootmgr chwd polkit \
               cryptsetup lvm2 btrfs-progs e2fsprogs syslinux; do
             if ! grep -qxF "$pkg" "$PKG_LIST"; then
@@ -377,7 +401,7 @@ jobs:
 
           # ---- Hyprland "rice" (waybar, kitty, fish, wallpaper) + size trims ----
           CONF="$AIROOT/etc/skel/.config"
-          mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/mako" "$CONF/gtk-3.0" "$CONF/gtk-4.0"
+          mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/mako" "$CONF/gtk-3.0" "$CONF/gtk-4.0" "$CONF/matugen/templates" "$CONF/anyrun" "$CONF/btop"
 
           # Wallpaper: soft dark-navy glow, generated here (pure python, ~few hundred KB)
           cat > /tmp/mkwall.py <<'PYWALL'
@@ -416,7 +440,7 @@ jobs:
           -- Hyprland 0.57+ only reads hyprland.lua; the old hyprland.conf is ignored.
           local mod   = "SUPER"
           local term  = "kitty"
-          local files = "thunar"
+          local files = "nautilus"
           local menu  = "wofi --show drun"
 
           hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
@@ -472,7 +496,8 @@ jobs:
           hl.animation({ leaf = "fade",       enabled = true, speed = 3, bezier = "default" })
           hl.animation({ leaf = "workspaces", enabled = true, speed = 3, bezier = "default", style = "slide" })
 
-          -- Window rules: float + center the first-run / cheatsheet zenity window.
+          -- Window rules: float + center the first-run / cheatsheet zenity window,
+          -- the Wi-Fi (nmtui) window, and open the audio mixer under the volume button.
           -- The Lua rule API name differs between Hyprland versions (window_rule vs
           -- windowrule); pick whichever exists and pcall it so a mismatch can never
           -- break the config (zenity then just opens tiled; it is still usable).
@@ -484,12 +509,31 @@ jobs:
               float = true,
               center = true,
             })
+            -- Wi-Fi: kitty --class nmtui-popup -e nmtui connect (see wifi.sh)
+            pcall(window_rule, {
+              name  = "wifi-popup",
+              match = { class = "^nmtui-popup$" },
+              float = true,
+              center = true,
+              size = { 640, 420 },
+            })
+            -- Volume: pavucontrol appears centred under the pointer (= the bar button),
+            -- just below the bar. Expressions are monitor-local.
+            pcall(window_rule, {
+              name  = "volume-popup",
+              match = { class = "^(org\\.pulseaudio\\.pavucontrol|pavucontrol)$" },
+              float = true,
+              size = { 440, 500 },
+              move = { "(cursor_x-(window_w*0.5))", "54" },
+            })
           end
 
           -- Apps and session
           hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd(term))
           hl.bind(mod .. " + D",      hl.dsp.exec_cmd(menu))
-          hl.bind(mod .. " + SPACE",  hl.dsp.exec_cmd("sh ~/.config/hypr/palette.sh"))
+          hl.bind(mod .. " + SPACE",  hl.dsp.exec_cmd("sh ~/.config/hypr/launcher.sh"))
+          hl.bind(mod .. " + SHIFT + SPACE", hl.dsp.exec_cmd("sh ~/.config/hypr/palette.sh"))
+          hl.bind(mod .. " + P",      hl.dsp.exec_cmd("sh ~/.config/hypr/theme.sh"))
           hl.bind(mod .. " + ALT + SPACE", hl.dsp.exec_cmd("sh ~/.config/hypr/kb-switch.sh"))
           hl.bind(mod .. " + E",      hl.dsp.exec_cmd(files))
           hl.bind(mod .. " + B",      hl.dsp.exec_cmd("brave"))
@@ -551,19 +595,12 @@ jobs:
             "margin-right": 12,
             "spacing": 6,
             "modules-left": ["custom/launcher", "custom/separator", "hyprland/window"],
-            "modules-center": ["hyprland/workspaces"],
             "modules-right": ["idle_inhibitor", "tray", "network", "pulseaudio", "backlight",
                               "battery", "cpu", "memory", "hyprland/language",
                               "custom/separator2", "clock", "custom/power"],
             "custom/launcher": { "format": " ", "tooltip": false, "on-click": "wofi --show drun", "on-click-right": "sh ~/.config/hypr/palette.sh" },
             "custom/separator": { "format": "", "tooltip": false },
             "custom/separator2": { "format": "", "tooltip": false },
-            "hyprland/workspaces": {
-              "format": "{name}",
-              "on-click": "activate",
-              "sort-by-number": true,
-              "persistent-workspaces": { "*": 9 }
-            },
             "idle_inhibitor": {
               "format": "{icon}",
               "format-icons": { "activated": "\uf186", "deactivated": "\uf185" },
@@ -580,10 +617,10 @@ jobs:
             "hyprland/language": {
               "format": "{}",
               "tooltip": false,
-              "on-click": "sh ~/.config/hypr/kb-switch.sh"
+              "on-click": "sh ~/.config/hypr/kb-menu.sh"
             },
             "hyprland/window": { "format": "{title}", "max-length": 45, "rewrite": { "": " " } },
-            "clock": { "format": "{:%H:%M}", "format-alt": "{:%A  %d %b %Y}", "tooltip-format": "<tt>{calendar}</tt>" },
+            "clock": { "format": "{:%H:%M}", "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt>{calendar}</tt>", "on-click": "sh ~/.config/hypr/clock-click.sh" },
             "tray": { "spacing": 10, "icon-size": 16 },
             "network": {
               "format-wifi": "\uf1eb  {essid}",
@@ -591,13 +628,13 @@ jobs:
               "format-disconnected": "\uf071  offline",
               "tooltip-format-wifi": "{ifname}  {ipaddr}\n{signalStrength}%  {frequency} GHz",
               "tooltip-format-ethernet": "{ifname}  {ipaddr}",
-              "on-click": "nm-connection-editor"
+              "on-click": "sh ~/.config/hypr/wifi.sh"
             },
             "pulseaudio": {
               "format": "{icon}  {volume}%",
               "format-muted": "\uf6a9  muted",
               "format-icons": { "default": ["\uf026", "\uf027", "\uf028"] },
-              "on-click": "pavucontrol",
+              "on-click": "sh ~/.config/hypr/volume.sh",
               "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
               "scroll-step": 2
             },
@@ -609,21 +646,24 @@ jobs:
               "states": { "warning": 25, "critical": 10 },
               "interval": 30
             },
-            "custom/power": { "format": "\uf011", "tooltip": false, "on-click": "sh ~/.config/hypr/power.sh" }
+            "custom/power": { "format": "\uf011", "tooltip": false, "on-click": "sh ~/.config/hypr/power.sh bar" }
           }
           WBCONF
 
           cat > "$CONF/waybar/style.css" <<'WBCSS'
-          @define-color bg rgba(10, 10, 18, 0.82);
-          @define-color bg_hover rgba(24, 24, 38, 0.92);
+          /* colors.css holds the base colours; Super+P (matugen) rewrites it. */
+          @import "colors.css";
+
+          @define-color bg alpha(@surface, 0.82);
+          @define-color bg_hover alpha(@surface_container_high, 0.92);
           @define-color border_dim rgba(255, 255, 255, 0.06);
           @define-color border_bright rgba(255, 255, 255, 0.12);
-          @define-color text #e0e0e0;
-          @define-color text_dim #787878;
-          @define-color accent #b4befe;
-          @define-color accent_dim rgba(180, 190, 254, 0.15);
-          @define-color warn #f9e2af;
-          @define-color crit #f38ba8;
+          @define-color text @on_surface;
+          @define-color text_dim @on_surface_variant;
+          @define-color accent @primary;
+          @define-color accent_dim alpha(@primary, 0.15);
+          @define-color warn @tertiary;
+          @define-color crit @error;
 
           * {
             font-family: "Noto Sans", "Font Awesome 6 Free", sans-serif;
@@ -686,26 +726,6 @@ jobs:
             min-width: 0;
           }
 
-          /* ── Workspaces ── */
-          #workspaces button {
-            background: @bg;
-            color: @text_dim;
-            border: 1px solid @border_dim;
-            border-radius: 10px;
-            padding: 2px 10px;
-            margin: 0 1px;
-            min-width: 24px;
-            transition: all 200ms ease;
-          }
-          #workspaces button.occupied {
-            color: @text; border-color: @border_bright;
-          }
-          #workspaces button.active {
-            background: @accent; color: #0a0a12; border-color: @accent;
-            box-shadow: 0 0 10px rgba(180, 190, 254, 0.35);
-          }
-          #workspaces button.urgent { color: @crit; }
-
           /* ── Clock ── */
           #clock {
             font-weight: 600;
@@ -738,17 +758,30 @@ jobs:
 
           cat > "$CONF/hypr/power.sh" <<'POWERSH'
           #!/bin/sh
-          # Power menu (Super+X, the power button in the bar, or "System: Power menu" in the palette).
+          # Power menu. Super+X opens it centred; the bar's power button runs "power.sh bar",
+          # which drops it down under the button. Also in the palette ("System: Power menu").
+          # Same wofi path as the palette (default style, no custom markup/stylesheet).
+          if [ "${1:-}" = bar ]; then
+            set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 54)
+            place="--location top_left --xoffset $1 --yoffset $2"
+          else
+            place=""
+          fi
+          # Font Awesome icons written as UTF-8 bytes so this file stays plain ASCII.
+          i_lock=$(printf '\357\200\243')    # U+F023
+          i_out=$(printf '\357\213\265')     # U+F2F5
+          i_reboot=$(printf '\357\200\241')  # U+F021
+          i_off=$(printf '\357\200\221')     # U+F011
           choice=$(printf '%s\n' \
-            "<span size='x-large'></span>  Lock" \
-            "<span size='x-large'></span>  Logout" \
-            "<span size='x-large'></span>  Reboot" \
-            "<span size='x-large'></span>  Shut down" \
-            | wofi --dmenu --allow-markup --hide-search --columns 4 --width 640 --height 130 \
-                --cache-file /dev/null --prompt Power --style "$HOME/.config/wofi/power.css")
+            "$i_lock  Lock" \
+            "$i_out  Log out" \
+            "$i_reboot  Reboot" \
+            "$i_off  Shut down" \
+            | wofi --dmenu --hide-search --insensitive --cache-file /dev/null --prompt Power \
+                --width 220 --height 200 $place)
           case "$choice" in
             *Lock*) exec hyprlock ;;
-            *Logout*) hyprctl dispatch 'hl.dsp.exit()'; hyprctl dispatch exit ;;
+            *Log\ out*) hyprctl dispatch 'hl.dsp.exit()'; hyprctl dispatch exit ;;
             *Reboot*) systemctl reboot ;;
             *Shut\ down*) systemctl poweroff ;;
           esac
@@ -794,23 +827,6 @@ jobs:
           #img { margin-right: 10px; }
           WOFICSS
 
-          cat > "$CONF/wofi/power.css" <<'POWERCSS'
-          window {
-            margin: 0;
-            border: 1px solid #2a2a2a;
-            border-radius: 20px;
-            background-color: rgba(0, 0, 0, 0.94);
-            font-family: "Noto Sans", "DejaVu Sans", sans-serif;
-            font-size: 15px;
-          }
-          #outer-box { margin: 12px; background-color: transparent; }
-          #scroll { margin: 0; }
-          #inner-box { background-color: transparent; }
-          #entry { padding: 22px 6px; margin: 2px; border-radius: 14px; color: #cfcfcf; }
-          #entry:selected { background-color: #ffffff; color: #000000; }
-          #text { color: inherit; }
-          POWERCSS
-
           cat > "$CONF/gtk-3.0/settings.ini" <<'GTK3INI'
           [Settings]
           gtk-application-prefer-dark-theme=1
@@ -833,7 +849,7 @@ jobs:
 
           cat > "$CONF/hypr/palette.sh" <<'WBPALETTE'
           #!/bin/sh
-          # Command palette (Super+Space, or right-click the launcher icon in the bar).
+          # Command palette (Super+Shift+Space, or right-click the launcher icon in the bar).
           # Type to filter (fuzzy), Enter to run. Recently used entries float to the top.
           # To add a command: add a line to the list and a matching case below.
           HIST="${XDG_CACHE_HOME:-$HOME/.cache}/palette-history"
@@ -894,6 +910,7 @@ jobs:
             "Hyprland: Show keybinds" \
             "Hyprland: Restart waybar" \
             "System: System info" \
+            "System: Wallpaper theme (matugen)" \
             "System: Power menu" \
             "System: Lock screen" \
             "System: Suspend" \
@@ -918,7 +935,7 @@ jobs:
           case "$choice" in
             "App: Search all applications") exec wofi --show drun ;;
             "App: Terminal") exec kitty ;;
-            "App: Files") exec thunar ;;
+            "App: Files") exec nautilus ;;
             "App: Browser") exec brave ;;
             "Window: Toggle floating") hyprctl dispatch 'hl.dsp.window.float({ action = "toggle" })' ;;
             "Window: Toggle fullscreen") hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" })' ;;
@@ -955,7 +972,7 @@ jobs:
             "Audio: Set volume to 100%") wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.0 ;;
             "Display: Brightness up") brightnessctl set 5%+ ;;
             "Display: Brightness down") brightnessctl set 5%- ;;
-            "Network: Wi-Fi and connections") term nmtui ;;
+            "Network: Wi-Fi and connections") exec sh "$HOME/.config/hypr/wifi.sh" ;;
             "Network: Toggle Wi-Fi")
               if nmcli radio wifi | grep -q '^enabled'; then
                 nmcli radio wifi off && notify "Wi-Fi" "Turned off"
@@ -981,6 +998,7 @@ jobs:
             "Hyprland: Show keybinds") term less "$HOME/.config/hypr/hyprland.lua" ;;
             "Hyprland: Restart waybar") pkill -x waybar; sleep 0.3; exec waybar ;;
             "System: System info") term sh -c 'fastfetch; echo; read -r _' ;;
+            "System: Wallpaper theme (matugen)") exec sh "$HOME/.config/hypr/theme.sh" ;;
             "System: Power menu") exec sh "$HOME/.config/hypr/power.sh" ;;
             "System: Lock screen") exec hyprlock ;;
             "System: Suspend") systemctl suspend ;;
@@ -1018,14 +1036,31 @@ jobs:
           cursor_shape beam
           confirm_os_window_close 0
           enable_audio_bell no
+          include colors.conf
           KITTYCONF
+
+          # Base colours for the bar and kitty; Super+P (matugen) overwrites these files.
+          cat > "$CONF/waybar/colors.css" <<'WBCOLORS'
+          @define-color surface #0a0a12;
+          @define-color surface_container_high #181826;
+          @define-color on_surface #e0e0e0;
+          @define-color on_surface_variant #787878;
+          @define-color primary #b4befe;
+          @define-color on_primary #0a0a12;
+          @define-color tertiary #f9e2af;
+          @define-color error #f38ba8;
+          WBCOLORS
+          cat > "$CONF/kitty/colors.conf" <<'KITTYCOLORS'
+          background #000000
+          foreground #e6e6e6
+          KITTYCOLORS
 
           cat > "$CONF/fish/config.fish" <<'FISHCONF'
           function fish_greeting
               fastfetch
               echo
               set_color 8a8a8a
-              echo "  Super+D apps · Super+Space commands · Super+F1 cheatsheet · Super+X power"
+              echo "  Super+D apps · Super+Space launcher · Super+P theme · Super+F1 shortcuts · Super+X power"
               set_color normal
           end
           function fish_prompt
@@ -1036,6 +1071,245 @@ jobs:
               set_color normal
           end
           FISHCONF
+
+
+          # ---- Popups: dropdowns under bar buttons, Wi-Fi, volume, clock/timezone, launcher, theme ----
+          cat > "$CONF/hypr/popup-pos.sh" <<'POPUPPOS'
+          #!/bin/sh
+          # popup-pos.sh WIDTH [TOP] -> prints "X Y": where a popup of WIDTH px must go so it sits
+          # centred under the mouse pointer (the bar button that was just clicked), TOP px from the
+          # top of the monitor and kept on screen. Falls back to "100 TOP".
+          python3 - "${1:-300}" "${2:-54}" <<'PY' 2>/dev/null || echo "100 ${2:-54}"
+          import json, subprocess, sys
+          w, top = int(sys.argv[1]), int(sys.argv[2])
+          def hc(cmd):
+              return json.loads(subprocess.check_output(["hyprctl", "-j", cmd], text=True))
+          c = hc("cursorpos")
+          mons = hc("monitors")
+          def size(m):
+              mw, mh = m["width"], m["height"]
+              if m.get("transform", 0) % 2:
+                  mw, mh = mh, mw
+              return mw / m["scale"], mh / m["scale"]
+          def has(m):
+              sw, sh = size(m)
+              return m["x"] <= c["x"] < m["x"] + sw and m["y"] <= c["y"] < m["y"] + sh
+          mon = next((m for m in mons if has(m)), mons[0])
+          sw, _ = size(mon)
+          x = max(8, min(c["x"] - mon["x"] - w / 2, sw - w - 8))
+          print(int(x), top)
+          PY
+          POPUPPOS
+
+          cat > "$CONF/hypr/kb-menu.sh" <<'KBMENU'
+          #!/bin/sh
+          # Language dropdown (click the layout in the bar). The order must match kb_layout
+          # ("us,de,fr,es") in hyprland.lua. Super+Alt+Space still cycles (kb-switch.sh).
+          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 54)
+          choice=$(printf '%s\n' "us  English (US)" "de  Deutsch" "fr  Français" "es  Español" \
+            | wofi --dmenu --hide-search --insensitive --cache-file /dev/null --prompt Language \
+                --width 220 --height 200 --location top_left --xoffset "$1" --yoffset "$2")
+          [ -n "$choice" ] || exit 0
+          case "$choice" in
+            us*) idx=0 ;;
+            de*) idx=1 ;;
+            fr*) idx=2 ;;
+            es*) idx=3 ;;
+            *) exit 0 ;;
+          esac
+          hyprctl switchxkblayout all "$idx" >/dev/null
+          command -v notify-send >/dev/null 2>&1 && notify-send -t 2000 "Keyboard: ${choice#??  }"
+          exit 0
+          KBMENU
+
+          cat > "$CONF/hypr/clock-click.sh" <<'CLOCKCLICK'
+          #!/bin/sh
+          # Waybar has no double-click event, so remember the time of the last click: a second
+          # click within 450 ms opens the timezone prompt.
+          stamp="${XDG_RUNTIME_DIR:-/tmp}/waybar-clock-click"
+          now=$(( $(date +%s%N) / 1000000 ))
+          last=$(cat "$stamp" 2>/dev/null || echo 0)
+          if [ $((now - last)) -lt 450 ]; then
+            rm -f "$stamp"
+            exec sh "$HOME/.config/hypr/tz-prompt.sh"
+          fi
+          echo "$now" > "$stamp"
+          CLOCKCLICK
+
+          cat > "$CONF/hypr/tz-prompt.sh" <<'TZPROMPT'
+          #!/bin/sh
+          # Text bar under the clock: type a UTC offset ("5:30", "5", "-8", "+3") or a zone name
+          # ("Asia/Kolkata") and press Enter. Esc cancels.
+          # Whole-hour offsets use fixed Etc/GMT zones (no daylight saving); the :30/:45 offsets
+          # map to the zone that normally has that offset.
+          notify() { command -v notify-send >/dev/null 2>&1 && notify-send -t 4000 "$@"; return 0; }
+
+          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 320 54)
+          raw=$(printf '' | wofi --dmenu --exec-search --cache-file /dev/null --prompt "UTC offset, e.g. 5:30" \
+            --width 320 --height 100 --location top_left --xoffset "$1" --yoffset "$2") || exit 0
+          raw=$(printf '%s' "$raw" | tr -d '[:space:]')
+          [ -n "$raw" ] || exit 0
+          case "$raw" in
+            *..*) notify "Invalid timezone" "$raw"; exit 1 ;;
+          esac
+
+          zone=""
+          if [ -f "/usr/share/zoneinfo/$raw" ]; then
+            zone="$raw"
+          else
+            o=${raw#[Uu][Tt][Cc]}
+            o=${o#[Gg][Mm][Tt]}
+            sign=+
+            case "$o" in
+              -*) sign=-; o=${o#-} ;;
+              +*) o=${o#+} ;;
+            esac
+            h=${o%%:*}
+            m=00
+            case "$o" in *:*) m=${o#*:} ;; esac
+            case "$h$m" in
+              ''|*[!0-9]*) notify "Invalid timezone" "Use an offset like 5:30, 5 or -8, or a name like Asia/Kolkata"; exit 1 ;;
+            esac
+            h=$(printf '%s' "$h" | sed 's/^0*//'); h=${h:-0}
+            m=$(printf '%s' "$m" | sed 's/^0*//'); m=${m:-0}
+            limit=14
+            [ "$sign" = - ] && limit=12
+            if [ "$h" -gt "$limit" ]; then
+              notify "Invalid timezone" "UTC offsets go from -12 to +14"; exit 1
+            fi
+            case "$m" in
+              0)
+                if [ "$h" -eq 0 ]; then
+                  zone=Etc/UTC
+                elif [ "$sign" = + ]; then
+                  zone="Etc/GMT-$h"
+                else
+                  zone="Etc/GMT+$h"
+                fi
+                ;;
+              30|45)
+                case "$sign$h:$m" in
+                  +3:30) zone=Asia/Tehran ;;
+                  +4:30) zone=Asia/Kabul ;;
+                  +5:30) zone=Asia/Kolkata ;;
+                  +5:45) zone=Asia/Kathmandu ;;
+                  +6:30) zone=Asia/Yangon ;;
+                  +8:45) zone=Australia/Eucla ;;
+                  +9:30) zone=Australia/Darwin ;;
+                  +10:30) zone=Australia/Lord_Howe ;;
+                  +12:45) zone=Pacific/Chatham ;;
+                  -3:30) zone=America/St_Johns ;;
+                  -9:30) zone=Pacific/Marquesas ;;
+                esac
+                ;;
+            esac
+          fi
+          if [ -z "$zone" ] || [ ! -f "/usr/share/zoneinfo/$zone" ]; then
+            notify "No timezone for that offset" "Try a zone name such as Asia/Kolkata"
+            exit 1
+          fi
+          if sudo -n timedatectl set-timezone "$zone" 2>/dev/null || timedatectl set-timezone "$zone" 2>/dev/null; then
+            touch "$HOME/.config/hypr/.tz-set-done"
+            notify "Timezone set" "$zone"
+            # restart the bar (detached) so the clock picks the new zone up
+            setsid -f sh -c 'sleep 0.3; pkill -x waybar; sleep 0.3; exec waybar' >/dev/null 2>&1
+          else
+            notify "Could not set timezone" "$zone"
+          fi
+          TZPROMPT
+
+          cat > "$CONF/hypr/wifi.sh" <<'WIFISH'
+          #!/bin/sh
+          # Click Wi-Fi in the bar: switch the radio on, then open nmtui directly on
+          # "Activate a connection" in a floating window. Clicking again closes it.
+          if pkill -f 'kitty --class nmtui-popup'; then exit 0; fi
+          if command -v nmcli >/dev/null 2>&1; then
+            rfkill unblock wifi 2>/dev/null || sudo -n rfkill unblock wifi 2>/dev/null
+            nmcli radio wifi on >/dev/null 2>&1
+          fi
+          exec kitty --class nmtui-popup -T "Wi-Fi" -o confirm_os_window_close=0 -e nmtui connect
+          WIFISH
+
+          cat > "$CONF/hypr/volume.sh" <<'VOLUMESH'
+          #!/bin/sh
+          # Click the volume in the bar: open (or close) the audio mixer. The "volume-popup" window
+          # rule in hyprland.lua floats it and puts it under the pointer, i.e. under the button.
+          if pkill -x pavucontrol; then exit 0; fi
+          exec pavucontrol
+          VOLUMESH
+
+          cat > "$CONF/hypr/launcher.sh" <<'LAUNCHERSH'
+          #!/bin/sh
+          # Super+Space: anyrun if it made it into the image, otherwise the command palette.
+          if command -v anyrun >/dev/null 2>&1 && [ -s "$HOME/.config/anyrun/config.ron" ]; then
+            if pkill -x anyrun; then exit 0; fi
+            exec anyrun
+          fi
+          exec sh "$HOME/.config/hypr/palette.sh"
+          LAUNCHERSH
+
+          # ---- matugen (Super+P): colour scheme from a wallpaper ----
+          cat > "$CONF/matugen/config.toml" <<'MATUGENCONF'
+          [config]
+
+          [templates.waybar]
+          input_path = '~/.config/matugen/templates/waybar-colors.css'
+          output_path = '~/.config/waybar/colors.css'
+
+          [templates.kitty]
+          input_path = '~/.config/matugen/templates/kitty-colors.conf'
+          output_path = '~/.config/kitty/colors.conf'
+          MATUGENCONF
+
+          cat > "$CONF/matugen/templates/waybar-colors.css" <<'MATUGENWB'
+          @define-color surface {{colors.surface.default.hex}};
+          @define-color surface_container_high {{colors.surface_container_high.default.hex}};
+          @define-color on_surface {{colors.on_surface.default.hex}};
+          @define-color on_surface_variant {{colors.on_surface_variant.default.hex}};
+          @define-color primary {{colors.primary.default.hex}};
+          @define-color on_primary {{colors.on_primary.default.hex}};
+          @define-color tertiary {{colors.tertiary.default.hex}};
+          @define-color error {{colors.error.default.hex}};
+          MATUGENWB
+
+          cat > "$CONF/matugen/templates/kitty-colors.conf" <<'MATUGENKITTY'
+          background {{colors.surface.default.hex}}
+          foreground {{colors.on_surface.default.hex}}
+          cursor {{colors.primary.default.hex}}
+          selection_background {{colors.primary.default.hex}}
+          selection_foreground {{colors.on_primary.default.hex}}
+          MATUGENKITTY
+
+          cat > "$CONF/hypr/theme.sh" <<'THEMESH'
+          #!/bin/sh
+          # Super+P: pick an image, make it the wallpaper, build a Material You colour scheme from
+          # it with matugen and apply it to the top bar and kitty (config: ~/.config/matugen/).
+          notify() { command -v notify-send >/dev/null 2>&1 && notify-send -t 5000 "$@"; return 0; }
+          command -v matugen >/dev/null 2>&1 || { notify "matugen is not installed"; exit 1; }
+
+          start="$HOME/Pictures"
+          [ -d "$start" ] || start="$HOME"
+          img=$(zenity --file-selection --title="Pick a wallpaper" --filename="$start/" \
+            --file-filter='Images | *.png *.jpg *.jpeg *.webp *.PNG *.JPG *.JPEG *.WEBP' 2>/dev/null) || exit 0
+          [ -f "$img" ] || exit 0
+
+          ext=$(printf '%s' "${img##*.}" | tr 'A-Z' 'a-z')
+          dest="$HOME/.config/hypr/wallpaper-custom.$ext"
+          rm -f "$HOME"/.config/hypr/wallpaper-custom.*
+          cp "$img" "$dest"
+
+          if ! out=$(matugen -m dark image "$dest" 2>&1); then
+            notify "matugen failed" "$(printf '%s' "$out" | tail -n 3)"
+            exit 1
+          fi
+
+          pkill -x swaybg
+          setsid -f swaybg -i "$dest" -m fill >/dev/null 2>&1
+          pkill -SIGUSR2 waybar
+          pkill -SIGUSR1 kitty
+          notify "Theme updated" "Colours generated from $(basename "$img")"
+          exit 0
+          THEMESH
 
           # ---- First boot: timezone autodetect (the live ISO boots in UTC) ----
           cat > "$CONF/hypr/tz-setup.sh" <<'TZSETUP'
@@ -1091,9 +1365,11 @@ jobs:
             LAUNCH
               Super + Return       Terminal (kitty)
               Super + D            Application launcher (wofi)
-              Super + Space        Command palette
+              Super + Space        Launcher (anyrun)
+              Super + Shift + Space  Command palette
+              Super + P            Pick a wallpaper, recolour bar + terminal (matugen)
               Super + B            Browser (brave)
-              Super + E            Files (thunar)
+              Super + E            Files (nautilus)
               Super + F1           This cheatsheet
 
             WINDOWS
@@ -1125,11 +1401,13 @@ jobs:
 
             MEDIA
               Volume / Brightness  Dedicated keys work
-              Super + Space        "Audio:" / "Display:" entries in palette
+              Super + Shift + Space  "Audio:" / "Display:" entries in palette
 
             WAYBAR
-              Left-click WiFi      Network editor
-              Left-click volume    Audio mixer
+              Click WiFi           Wi-Fi list (nmtui)
+              Click volume         Audio mixer, opens under the button
+              Click language       Layout dropdown
+              Double-click clock   Set timezone (type 5:30, 5, -8 ...)
               Right-click launcher Command palette
 
           ───────────────────────────────────────────────────────────────
@@ -1196,7 +1474,9 @@ jobs:
 
           After boot
             Super+D       app launcher
-            Super+Space   command palette
+            Super+Space   launcher (anyrun)
+            Super+Shift+Space  command palette
+            Super+P       wallpaper colours (matugen)
             Super+F1      keyboard shortcuts
             Super+X       power menu
 
@@ -1206,6 +1486,296 @@ jobs:
           Not an official CachyOS release.
           ISOREADME
 
+
+          # ---- btop: your btop.conf (horizon theme) ----
+          cat > "$CONF/btop/btop.conf" <<'BTOPCONF'
+          #? Config file for btop v.1.4.7
+
+          #* Name of a btop++/bpytop/bashtop formatted ".theme" file, "Default" and "TTY" for builtin themes.
+          #* Themes should be placed in "../share/btop/themes" relative to binary or "$HOME/.config/btop/themes"
+          color_theme = "/usr/share/btop/themes/horizon.theme"
+
+          #* If the theme set background should be shown, set to False if you want terminal background transparency.
+          theme_background = false
+
+          #* Sets if 24-bit truecolor should be used, will convert 24-bit colors to 256 color (6x6x6 color cube) if false.
+          truecolor = true
+
+          #* Set to true to force tty mode regardless if a real tty has been detected or not.
+          #* Will force 16-color mode and TTY theme, set all graph symbols to "tty" and swap out other non tty friendly symbols.
+          force_tty = false
+
+          #* Option to disable presets. Either the default preset, custom presets, or all presets.
+          #* "Off" All presets are enabled.
+          #* "Default" preset is disabled.#* "Custom" presets are disabled.#* "All" presets are disabled.
+          disable_presets = "Off"
+
+          #* Define presets for the layout of the boxes. Preset 0 is always all boxes shown with default settings. Max 9 presets.
+          #* Format: "box_name:P:G,box_name:P:G" P=(0 or 1) for alternate positions, G=graph symbol to use for box.
+          #* Use whitespace " " as separator between different presets.
+          #* Example: "cpu:0:default,mem:0:tty,proc:1:default cpu:0:braille,proc:0:tty"
+          presets = "cpu:1:default,proc:0:default cpu:0:default,mem:0:default,net:0:default cpu:0:block,net:0:tty"
+
+          #* Set to True to enable "h,j,k,l,g,G" keys for directional control in lists.
+          #* Conflicting keys for h:"help" and k:"kill" is accessible while holding shift.
+          vim_keys = false
+
+          #* Disable all mouse events.
+          disable_mouse = false
+
+          #* Rounded corners on boxes, is ignored if TTY mode is ON.
+          rounded_corners = true
+
+          #* Use terminal synchronized output sequences to reduce flickering on supported terminals.
+          terminal_sync = true
+
+          #* Default symbols to use for graph creation, "braille", "block" or "tty".
+          #* "braille" offers the highest resolution but might not be included in all fonts.
+          #* "block" has half the resolution of braille but uses more common characters.
+          #* "tty" uses only 3 different symbols but will work with most fonts and should work in a real TTY.
+          #* Note that "tty" only has half the horizontal resolution of the other two, so will show a shorter historical view.
+          graph_symbol = "braille"
+
+          # Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
+          graph_symbol_cpu = "default"
+
+          # Graph symbol to use for graphs in gpu box, "default", "braille", "block" or "tty".
+          graph_symbol_gpu = "default"
+
+          # Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
+          graph_symbol_mem = "default"
+
+          # Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
+          graph_symbol_net = "default"
+
+          # Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
+          graph_symbol_proc = "default"
+
+          #* Manually set which boxes to show. Available values are "cpu mem net proc" and "gpu0" through "gpu5", separate values with whitespace.
+          shown_boxes = "cpu mem net proc"
+
+          #* Update time in milliseconds, recommended 2000 ms or above for better sample times for graphs.
+          update_ms = 500
+
+          #* Processes sorting, "pid" "program" "arguments" "threads" "user" "memory" "cpu lazy" "cpu direct",
+          #* "cpu lazy" sorts top process over time (easier to follow), "cpu direct" updates top process directly.
+          proc_sorting = "cpu lazy"
+
+          #* Reverse sorting order, True or False.
+          proc_reversed = false
+
+          #* Show processes as a tree.
+          proc_tree = false
+
+          #* Use the cpu graph colors in the process list.
+          proc_colors = true
+
+          #* Use a darkening gradient in the process list.
+          proc_gradient = true
+
+          #* If process cpu usage should be of the core it's running on or usage of the total available cpu power.
+          proc_per_core = false
+
+          #* Show process memory as bytes instead of percent.
+          proc_mem_bytes = true
+
+          #* Show cpu graph for each process.
+          proc_cpu_graphs = true
+
+          #* Use /proc/[pid]/smaps for memory information in the process info box (very slow but more accurate)
+          proc_info_smaps = false
+
+          #* Show proc box on left side of screen instead of right.
+          proc_left = false
+
+          #* (Linux) Filter processes tied to the Linux kernel(similar behavior to htop).
+          proc_filter_kernel = false
+
+          #* Should the process list follow the selected process when detailed view is open.
+          proc_follow_detailed = true
+
+          #* In tree-view, always accumulate child process resources in the parent process.
+          proc_aggregate = false
+
+          #* Should cpu and memory usage display be preserved for dead processes when paused.
+          keep_dead_proc_usage = false
+
+          #* Sets the CPU stat shown in upper half of the CPU graph, "total" is always available.
+          #* Select from a list of detected attributes from the options menu.
+          cpu_graph_upper = "Auto"
+
+          #* Sets the CPU stat shown in lower half of the CPU graph, "total" is always available.
+          #* Select from a list of detected attributes from the options menu.
+          cpu_graph_lower = "Auto"
+
+          #* If gpu info should be shown in the cpu box. Available values = "Auto", "On" and "Off".
+          show_gpu_info = "Auto"
+
+          #* Toggles if the lower CPU graph should be inverted.
+          cpu_invert_lower = true
+
+          #* Set to True to completely disable the lower CPU graph.
+          cpu_single_graph = false
+
+          #* Show cpu box at bottom of screen instead of top.
+          cpu_bottom = false
+
+          #* Shows the system uptime in the CPU box.
+          show_uptime = true
+
+          #* Shows the CPU package current power consumption in watts. Requires running `make setcap` or `make setuid` or running with sudo.
+          show_cpu_watts = true
+
+          #* Show cpu temperature.
+          check_temp = true
+
+          #* Which sensor to use for cpu temperature, use options menu to select from list of available sensors.
+          cpu_sensor = "Auto"
+
+          #* Show temperatures for cpu cores also if check_temp is True and sensors has been found.
+          show_coretemp = true
+
+          #* Set a custom mapping between core and coretemp, can be needed on certain cpus to get correct temperature for correct core.
+          #* Use lm-sensors or similar to see which cores are reporting temperatures on your machine.
+          #* Format "x:y" x=core with wrong temp, y=core with correct temp, use space as separator between multiple entries.
+          #* Example: "4:0 5:1 6:3"
+          cpu_core_map = ""
+
+          #* Which temperature scale to use, available values: "celsius", "fahrenheit", "kelvin" and "rankine".
+          temp_scale = "celsius"
+
+          #* Use base 10 for bits/bytes sizes, KB = 1000 instead of KiB = 1024.
+          base_10_sizes = false
+
+          #* Show CPU frequency.
+          show_cpu_freq = true
+
+          #* How to calculate CPU frequency, available values: "first", "range", "lowest", "highest" and "average".
+          freq_mode = "first"
+
+          #* Draw a clock at top of screen, formatting according to strftime, empty string to disable.
+          #* Special formatting: /host = hostname | /user = username | /uptime = system uptime
+          clock_format = "%X"
+
+          #* Update main ui in background when menus are showing, set this to false if the menus is flickering too much for comfort.
+          background_update = true
+
+          #* Custom cpu model name, empty string to disable.
+          custom_cpu_name = ""
+
+          #* Optional filter for shown disks, should be full path of a mountpoint, separate multiple values with whitespace " ".
+          #* Only disks matching the filter will be shown. Prepend exclude= to only show disks not matching the filter. Examples: disk_filter="/boot /home/user", disks_filter="exclude=/boot /home/user"
+          disks_filter = ""
+
+          #* Show graphs instead of meters for memory values.
+          mem_graphs = true
+
+          #* Show mem box below net box instead of above.
+          mem_below_net = false
+
+          #* Count ZFS ARC in cached and available memory.
+          zfs_arc_cached = true
+
+          #* If swap memory should be shown in memory box.
+          show_swap = true
+
+          #* Show swap as a disk, ignores show_swap value above, inserts itself after first disk.
+          swap_disk = true
+
+          #* If mem box should be split to also show disks info.
+          show_disks = true
+
+          #* Filter out non physical disks. Set this to False to include network disks, RAM disks and similar.
+          only_physical = true
+
+          #* Read disks list from /etc/fstab. This also disables only_physical.
+          use_fstab = true
+
+          #* Setting this to True will hide all datasets, and only show ZFS pools. (IO stats will be calculated per-pool)
+          zfs_hide_datasets = false
+
+          #* Set to true to show available disk space for privileged users.
+          disk_free_priv = false
+
+          #* Toggles if io activity % (disk busy time) should be shown in regular disk usage view.
+          show_io_stat = true
+
+          #* Toggles io mode for disks, showing big graphs for disk read/write speeds.
+          io_mode = false
+
+          #* Set to True to show combined read/write io graphs in io mode.
+          io_graph_combined = false
+
+          #* Set the top speed for the io graphs in MiB/s (100 by default), use format "mountpoint:speed" separate disks with whitespace " ".
+          #* Example: "/mnt/media:100 /:20 /boot:1".
+          io_graph_speeds = ""
+
+          #* Swap the positions of the upload and download speed graphs. When true, upload will be on top.
+          swap_upload_download = false
+
+          #* Set fixed values for network graphs in Mebibits. Is only used if net_auto is also set to False.
+          net_download = 100
+
+          net_upload = 100
+
+          #* Use network graphs auto rescaling mode, ignores any values set above and rescales down to 10 Kibibytes at the lowest.
+          net_auto = true
+
+          #* Sync the auto scaling for download and upload to whichever currently has the highest scale.
+          net_sync = true
+
+          #* Starts with the Network Interface specified here.
+          net_iface = ""
+
+          #* "True" shows bitrates in base 10 (Kbps, Mbps). "False" shows bitrates in binary sizes (Kibps, Mibps, etc.). "Auto" uses base_10_sizes.
+          base_10_bitrate = "Auto"
+
+          #* Show battery stats in top right if battery is present.
+          show_battery = true
+
+          #* Which battery to use if multiple are present. "Auto" for auto detection.
+          selected_battery = "Auto"
+
+          #* Show power stats of battery next to charge indicator.
+          show_battery_watts = true
+
+          #* Set loglevel for "~/.local/state/btop.log" levels are: "ERROR" "WARNING" "INFO" "DEBUG".
+          #* The level set includes all lower levels, i.e. "DEBUG" will show all logging info.
+          log_level = "WARNING"
+
+          #* Automatically save current settings to config file on exit.
+          save_config_on_exit = true
+
+          #* Measure PCIe throughput on NVIDIA cards, may impact performance on certain cards.
+          nvml_measure_pcie_speeds = true
+
+          #* Measure PCIe throughput on AMD cards, may impact performance on certain cards.
+          rsmi_measure_pcie_speeds = true
+
+          #* Horizontally mirror the GPU graph.
+          gpu_mirror_graph = true
+
+          #* Set which GPU vendors to show. Available values are "nvidia amd intel apple"
+          shown_gpus = "nvidia amd intel apple"
+
+          #* Custom gpu0 model name, empty string to disable.
+          custom_gpu_name0 = ""
+
+          #* Custom gpu1 model name, empty string to disable.
+          custom_gpu_name1 = ""
+
+          #* Custom gpu2 model name, empty string to disable.
+          custom_gpu_name2 = ""
+
+          #* Custom gpu3 model name, empty string to disable.
+          custom_gpu_name3 = ""
+
+          #* Custom gpu4 model name, empty string to disable.
+          custom_gpu_name4 = ""
+
+          #* Custom gpu5 model name, empty string to disable.
+          custom_gpu_name5 = ""
+          BTOPCONF
 
           # ---- idle, lock screen, notifications ----
           cat > "$CONF/hypr/hypridle.conf" <<'HYPRIDLE'
@@ -1426,6 +1996,34 @@ jobs:
             ln -sf /dev/null "$SYSD/$t"
           done
 
+      - name: Add anyrun to the live image (skipped if it was not built)
+        env:
+          ANYRUN_PKG: ${{ steps.anyrun.outputs.pkg }}
+        run: |
+          set -euo pipefail
+          AIROOT="cachyos/archiso/airootfs"
+          PKG_LIST="cachyos/archiso/packages_desktop.x86_64"
+          skip() {
+            echo "::warning::anyrun: $1; the ISO ships without it and Super+Space opens the command palette."
+            echo "anyrun: **not included** ($1)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          if [ -z "${ANYRUN_PKG:-}" ] || [ ! -f "$ANYRUN_PKG" ]; then skip "AUR build failed"; fi
+          lib=$(bsdtar -tf "$ANYRUN_PKG" | grep -E '(^|/)libapplications\.so$' | head -n1 || true)
+          bin=$(bsdtar -tf "$ANYRUN_PKG" | grep -E '^usr/bin/anyrun$' || true)
+          if [ -z "$lib" ] || [ -z "$bin" ]; then skip "package has no usr/bin/anyrun or libapplications.so"; fi
+          bsdtar -xpf "$ANYRUN_PKG" -C "$AIROOT" \
+            --exclude .PKGINFO --exclude .MTREE --exclude .BUILDINFO --exclude .INSTALL --exclude .CHANGELOG
+          # runtime library of the GTK4 frontend (small); everything else is already in the image
+          grep -qxF gtk4-layer-shell "$PKG_LIST" || echo gtk4-layer-shell >> "$PKG_LIST"
+          mkdir -p "$AIROOT/etc/skel/.config/anyrun"
+          printf 'Config(\n  plugins: ["/%s"],\n)\n' "$lib" > "$AIROOT/etc/skel/.config/anyrun/config.ron"
+          # make sure the binary stays executable inside the image
+          while IFS= read -r pd; do
+            sedx -o "$pd" '/^file_permissions=(/a\["/usr/bin/anyrun"]="0:0:755"'
+          done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
+          echo "anyrun: included ($(basename "$ANYRUN_PKG"))" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Patch Boot Entries
         run: |
           set -euo pipefail
@@ -1516,7 +2114,7 @@ jobs:
           fail=0
           PKG_LIST=cachyos/archiso/packages_desktop.x86_64
 
-          for pkg in plasma-desktop plasma-login-manager linux-cachyos-lts firefox; do
+          for pkg in plasma-desktop plasma-login-manager linux-cachyos-lts firefox thunar; do
             if grep -qxF "$pkg" "$PKG_LIST"; then echo "VERIFY FAIL: $pkg still in package list" >&2; fail=1; fi
           done
           if grep -q 'plasmalogin\.service' cachyos/util-iso.sh; then
@@ -1528,12 +2126,12 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/wofi/power.css etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
           [ -s cachyos/archiso/README.txt ] \
             || { echo "VERIFY FAIL: missing/empty archiso/README.txt" >&2; fail=1; }
-          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh; do
+          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh popup-pos.sh kb-menu.sh clock-click.sh tz-prompt.sh wifi.sh volume.sh launcher.sh theme.sh; do
             if ! sh -n "cachyos/archiso/airootfs/etc/skel/.config/hypr/$sh_file"; then
               echo "VERIFY FAIL: $sh_file has a shell syntax error" >&2; fail=1
             fi
@@ -1541,8 +2139,17 @@ jobs:
           if ! grep -q 'SHIFT + S.*screenshot\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: Super+Shift+S is not bound to the screenshot script" >&2; fail=1
           fi
-          if ! grep -q 'SPACE.*palette\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
-            echo "VERIFY FAIL: Super+Space is not bound to the command palette" >&2; fail=1
+          if ! grep -q '" + SPACE".*launcher\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: Super+Space is not bound to launcher.sh (anyrun)" >&2; fail=1
+          fi
+          if ! grep -q 'SHIFT + SPACE.*palette\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: Super+Shift+Space is not bound to the command palette" >&2; fail=1
+          fi
+          if ! grep -q '" + P".*theme\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: Super+P is not bound to theme.sh (matugen)" >&2; fail=1
+          fi
+          if ! grep -q 'local files = "nautilus"' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: Super+E does not open nautilus" >&2; fail=1
           fi
           if ! grep -q 'ALT + SPACE.*kb-switch\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: Super+Alt+Space is not bound to kb-switch.sh" >&2; fail=1
@@ -1550,10 +2157,14 @@ jobs:
           if grep -q 'ws-watch\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: hyprland.lua still starts ws-watch.sh" >&2; fail=1
           fi
-          if ! grep -q 'hyprland/workspaces' cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc \
-             || grep -q 'custom/ws1' cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc; then
-            echo "VERIFY FAIL: waybar must use hyprland/workspaces and no custom/ws1" >&2; fail=1
+          if grep -q 'hyprland/workspaces\|custom/ws1' cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc; then
+            echo "VERIFY FAIL: waybar must not show the workspace numbers" >&2; fail=1
           fi
+          for want in wifi.sh volume.sh kb-menu.sh clock-click.sh 'power.sh bar'; do
+            if ! grep -qF "$want" cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc; then
+              echo "VERIFY FAIL: waybar config does not call $want" >&2; fail=1
+            fi
+          done
           if ! luac -p cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: hyprland.lua has a Lua syntax error" >&2; fail=1
           fi
