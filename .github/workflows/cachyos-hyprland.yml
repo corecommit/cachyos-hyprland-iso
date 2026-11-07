@@ -1472,8 +1472,9 @@ jobs:
           # ---- Brave: quiet new tab page + random wallpaper on every start ----
           # Brave's own dashboard (sponsored images, top sites, news, clock, cards) is replaced by a
           # bare page showing the generated wallpaper: Preferences + a recommended policy point the
-          # homepage / "New Tab page shows" at it. The desktop file replaces the package's one so
-          # every way of starting Brave goes through brave-launch.sh.
+          # homepage / "New Tab page shows" at it. A user-level desktop file overrides the package's
+          # one (never ship /usr/share/applications/brave-browser.desktop: it conflicts with brave-bin,
+          # because this build copies airootfs BEFORE installing packages).
           cat > "$AIROOT/usr/share/cachyos-hyprland/brave-launch.sh" <<'BRAVELAUNCH'
           #!/bin/sh
           # Starts Brave with a brand-new random new-tab wallpaper (seed = current time).
@@ -1485,8 +1486,8 @@ jobs:
           exec brave "$@"
           BRAVELAUNCH
 
-          mkdir -p "$AIROOT/usr/share/applications" "$AIROOT/etc/brave/policies/recommended"
-          cat > "$AIROOT/usr/share/applications/brave-browser.desktop" <<'BRAVEDESKTOP'
+          mkdir -p "$CONF/../.local/share/applications" "$AIROOT/etc/brave/policies/recommended"
+          cat > "$CONF/../.local/share/applications/brave-browser.desktop" <<'BRAVEDESKTOP'
           [Desktop Entry]
           Version=1.0
           Name=Brave
@@ -2397,7 +2398,7 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/ws-daemon.py usr/share/cachyos-hyprland/genwall.py usr/share/cachyos-hyprland/brave-launch.sh usr/share/applications/brave-browser.desktop etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences etc/brave/policies/recommended/cachyos-hyprland.json; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/ws-daemon.py usr/share/cachyos-hyprland/genwall.py usr/share/cachyos-hyprland/brave-launch.sh etc/skel/.local/share/applications/brave-browser.desktop etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences etc/brave/policies/recommended/cachyos-hyprland.json; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
           [ -s cachyos/archiso/README.txt ] \
