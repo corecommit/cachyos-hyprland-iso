@@ -5,7 +5,7 @@
 #### New
 - **Wallpaper colours.** Press **Super+P**, pick any image, and it becomes your wallpaper. The top bar and the terminal are recoloured to match it. You can also run it from the command palette ("System: Wallpaper theme").
 - **anyrun launcher.** **Super+Space** now opens anyrun, a fast app launcher. If anyrun can't be included in a build, Super+Space opens the command palette instead.
-- **Set your timezone from the clock.** Double-click the clock in the top bar and type a UTC offset (`5:30`, `5`, `-8`) or a zone name such as `Asia/Kolkata`. Hovering over the clock shows the full date and a calendar.
+- **Set your timezone from the clock.** Double-click the clock in the top bar and type a UTC offset (`5:30`, `5`, `-8`) or a zone name such as `Asia/Tokyo`. Hovering over the clock shows the full date and a calendar.
 - **Keyboard layout menu.** Click the layout indicator in the top bar to pick US, German, French or Spanish from a dropdown. **Super+Alt+Space** still cycles through them.
 - **Your btop settings.** btop starts with the horizon colour theme and a ready-made layout.
 
