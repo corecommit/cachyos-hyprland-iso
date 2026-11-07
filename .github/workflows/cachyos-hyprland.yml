@@ -195,27 +195,6 @@ jobs:
           mkdir -p cachyos/out
           chown -R builder:builder cachyos
 
-      # anyrun (Super+Space) is not in the Arch or CachyOS repositories, only in the AUR,
-      # so it is built here with makepkg. This step may fail without failing the job: the
-      # ISO is then built without anyrun and Super+Space opens the command palette instead
-      # (see "Add anyrun to the live image").
-      - name: Build anyrun from the AUR (optional)
-        id: anyrun
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          pacman -S --needed --noconfirm rust gtk4-layer-shell
-          sudo -H -u builder bash -euo pipefail -c '
-            rm -rf "$HOME/aur" && mkdir -p "$HOME/aur" && cd "$HOME/aur"
-            git clone --depth 1 https://aur.archlinux.org/anyrun.git
-            cd anyrun
-            makepkg --syncdeps --noconfirm --needed --skippgpcheck
-          '
-          pkg=$(find /home/builder/aur/anyrun -maxdepth 1 -name 'anyrun-*.pkg.tar.*' ! -name '*-debug-*' | sort | head -n1)
-          [ -n "$pkg" ] || { echo "::error::makepkg produced no anyrun package" >&2; exit 1; }
-          echo "Built: $pkg"
-          echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
-
       # ------------------------------------------------------------------
       # PATCHES START HERE
       # ------------------------------------------------------------------
@@ -232,12 +211,16 @@ jobs:
             xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
             waybar wofi mako grim slurp wl-clipboard
             qt5-wayland qt6-wayland greetd greetd-tuigreet
-            bluez bluez-utils nautilus
+            bluez bluez-utils
             swaybg brightnessctl otf-font-awesome
             kitty fish fastfetch brave-bin nano
             cliphist libnotify
-            # xdg-*: creates ~/Documents ~/Downloads; xdg-open for nautilus/brave
+            # xdg-*: creates ~/Documents ~/Downloads; xdg-open for thunar/brave
             xdg-user-dirs xdg-utils
+            # thunar: file manager (gvfs = trash/mounts, tumbler = thumbnails)
+            thunar thunar-archive-plugin gvfs tumbler
+            # python: bar helpers (workspace buttons, popup placement) and the wallpaper generator
+            python
             # hypridle: auto-dim/blank/suspend
             hypridle
             # wl-clip-persist: clipboard survives the source app closing
@@ -252,7 +235,7 @@ jobs:
             imv
             # btop: system monitor
             btop
-            # file-roller: archive manager (nautilus also extracts/compresses by itself)
+            # file-roller: archive manager (used by thunar-archive-plugin)
             file-roller
             # nm-connection-editor: optional WiFi/Ethernet GUI (the bar opens nmtui instead)
             nm-connection-editor
@@ -289,7 +272,7 @@ jobs:
             modemmanager mobile-broadband-provider-info usb_modeswitch
             linux-cachyos-lts linux-cachyos-lts-zfs linux-cachyos-lts-nvidia-open
             linux-cachyos-zfs zfs-utils
-            thunar thunar-archive-plugin
+            nautilus
           )
           if [ "$KEEP_INSTALLER" != "true" ]; then
             REMOVE+=( cachyos-calamares-next cachyos-cli-installer-new )
@@ -312,7 +295,7 @@ jobs:
               wpa_supplicant mkinitcpio mkinitcpio-archiso linux-cachyos \
               linux-cachyos-nvidia-open nvidia-utils mesa \
               xdg-desktop-portal-hyprland hyprpolkitagent bluez bluez-utils \
-              brave-bin kitty nautilus nano grim slurp greetd greetd-tuigreet \
+              brave-bin kitty thunar nano grim slurp greetd greetd-tuigreet \
               sof-firmware linux-firmware grub efibootmgr chwd polkit \
               cryptsetup lvm2 btrfs-progs e2fsprogs syslinux; do
             if ! grep -qxF "$pkg" "$PKG_LIST"; then
@@ -401,47 +384,100 @@ jobs:
 
           # ---- Hyprland "rice" (waybar, kitty, fish, wallpaper) + size trims ----
           CONF="$AIROOT/etc/skel/.config"
-          mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/mako" "$CONF/gtk-3.0" "$CONF/gtk-4.0" "$CONF/matugen/templates" "$CONF/anyrun" "$CONF/btop"
+          mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/mako" "$CONF/gtk-3.0" "$CONF/gtk-4.0" "$CONF/matugen/templates" "$CONF/btop" "$CONF/BraveSoftware/Brave-Browser/Default"
 
-          # Wallpaper: soft dark-navy glow, generated here (pure python, ~few hundred KB)
-          cat > /tmp/mkwall.py <<'PYWALL'
-          import math, struct, sys, zlib
-          W, H = 960, 540
-          base = (9, 12, 34)
-          blobs = [(0.40, 0.58, 0.20, (170, 140, 70), 0.55),
-                   (0.52, 0.42, 0.15, (80, 80, 190), 0.75),
-                   (0.30, 0.70, 0.12, (120, 100, 60), 0.30)]
-          raw = bytearray()
-          for y in range(H):
-              raw.append(0)
-              fy = y / H
-              for x in range(W):
-                  fx = x / W
-                  r, g, b = base
-                  for cx, cy, rad, col, s in blobs:
-                      dx = (fx - cx) * W / H
-                      dy = fy - cy
-                      w = s * math.exp(-(dx * dx + dy * dy) / (2 * rad * rad))
-                      r += (col[0] - r) * w
-                      g += (col[1] - g) * w
-                      b += (col[2] - b) * w
-                  raw += bytes((int(r), int(g), int(b)))
-          def chunk(t, d):
-              c = struct.pack('>I', len(d)) + t + d
-              return c + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
-          png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)) \
-                + chunk(b'IDAT', zlib.compress(bytes(raw), 9)) + chunk(b'IEND', b'')
-          open(sys.argv[1], 'wb').write(png)
-          PYWALL
-          python3 /tmp/mkwall.py "$CONF/hypr/wallpaper.png"
+          # Wallpaper: a new random one every login (wallpaper.sh). This build-time copy is only the
+          # fallback for the first frame / lock screen. genwall.py is pure python.
+          mkdir -p "$AIROOT/usr/share/cachyos-hyprland"
+          cat > "$AIROOT/usr/share/cachyos-hyprland/genwall.py" <<'PYGEN'
+          #!/usr/bin/env python3
+          """Random dark wallpaper made of soft colour glows (pure python, no dependencies).
+
+          usage: genwall.py png  OUT.png    write a wallpaper
+                 genwall.py html OUT.html   write a bare web page showing one (Brave's new tab page)
+
+          The seed is the current time, so every run gives a different picture. The file is
+          written next to its destination and moved over the old one, so the old picture is
+          deleted and only one copy ever exists.
+          """
+          import base64, colorsys, math, os, random, struct, sys, time, zlib
+
+          W, H = 384, 216   # small on purpose: fast to make, smooth glows scale up cleanly
+
+
+          def render(seed):
+              rnd = random.Random(seed)
+              hue = rnd.random()
+              base = [255 * c for c in colorsys.hsv_to_rgb(hue, rnd.uniform(0.5, 0.8), rnd.uniform(0.05, 0.10))]
+              blobs = []
+              for i in range(rnd.randint(3, 5)):
+                  h = (hue + rnd.uniform(-0.15, 0.15) + (0.5 if i == 0 and rnd.random() < 0.3 else 0.0)) % 1.0
+                  col = [255 * c for c in colorsys.hsv_to_rgb(h, rnd.uniform(0.45, 0.8), rnd.uniform(0.55, 0.95))]
+                  cx, cy = rnd.uniform(0.1, 0.9), rnd.uniform(0.1, 0.9)
+                  rad = rnd.uniform(0.10, 0.28)
+                  s = rnd.uniform(0.35, 0.8)
+                  k = 2 * rad * rad
+                  ex = [s * math.exp(-(((x / W) - cx) * W / H) ** 2 / k) for x in range(W)]
+                  ey = [math.exp(-((y / H) - cy) ** 2 / k) for y in range(H)]
+                  blobs.append((col, ex, ey))
+              raw = bytearray()
+              for y in range(H):
+                  raw.append(0)
+                  for x in range(W):
+                      r, g, b = base
+                      for col, ex, ey in blobs:
+                          w = ex[x] * ey[y]
+                          r += (col[0] - r) * w
+                          g += (col[1] - g) * w
+                          b += (col[2] - b) * w
+                      raw += bytes((int(r), int(g), int(b)))
+
+              def chunk(t, d):
+                  c = struct.pack(">I", len(d)) + t + d
+                  return c + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+
+              return (b"\x89PNG\r\n\x1a\n"
+                      + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0))
+                      + chunk(b"IDAT", zlib.compress(bytes(raw), 6))
+                      + chunk(b"IEND", b""))
+
+
+          def write_atomic(path, data):
+              os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+              tmp = path + ".tmp"
+              with open(tmp, "wb") as f:
+                  f.write(data)
+              os.replace(tmp, path)
+
+
+          def main():
+              if len(sys.argv) != 3 or sys.argv[1] not in ("png", "html"):
+                  sys.exit(__doc__)
+              kind, out = sys.argv[1], sys.argv[2]
+              png = render(time.time_ns())
+              if kind == "png":
+                  write_atomic(out, png)
+                  return
+              b64 = base64.b64encode(png).decode()
+              page = ('<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>New Tab</title>\n'
+                      '<style>html,body{margin:0;height:100%%;background:#000}'
+                      'body{background:#000 url(data:image/png;base64,%s) center/cover no-repeat}</style>\n'
+                      '</head><body></body></html>\n') % b64
+              write_atomic(out, page.encode())
+
+
+          if __name__ == "__main__":
+              main()
+          PYGEN
+          python3 "$AIROOT/usr/share/cachyos-hyprland/genwall.py" png "$CONF/hypr/wallpaper.png"
 
           cat > "$CONF/hypr/hyprland.lua" <<'HYPRRICE'
           -- cachyos-hyprland rice
           -- Hyprland 0.57+ only reads hyprland.lua; the old hyprland.conf is ignored.
           local mod   = "SUPER"
           local term  = "kitty"
-          local files = "nautilus"
-          local menu  = "wofi --show drun"
+          local files = "thunar"
+          local menu  = "sh ~/.config/hypr/launcher.sh"
 
           hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 
@@ -450,8 +486,10 @@ jobs:
 
           hl.on("hyprland.start", function()
             hl.exec_cmd("systemctl --user start hyprpolkitagent")
-            hl.exec_cmd("swaybg -i ~/.config/hypr/wallpaper.png -m fill")
+            hl.exec_cmd("sh ~/.config/hypr/wallpaper.sh")
             hl.exec_cmd("waybar")
+            -- workspace buttons: starts after waybar so the first signal cannot hit a half-started bar
+            hl.exec_cmd("sh -c 'sleep 3; exec python3 ~/.config/hypr/ws-daemon.py'")
             hl.exec_cmd("mako")
             hl.exec_cmd("wl-paste --type text --watch cliphist store")
             hl.exec_cmd("wl-paste --type image --watch cliphist store")
@@ -505,9 +543,17 @@ jobs:
           if window_rule then
             pcall(window_rule, {
               name  = "zenity-float",
-              match = { class = "zenity" },
+              match = { class = "^(zenity|org\\.gnome\\.Zenity)$" },
               float = true,
               center = true,
+            })
+            -- Keyboard shortcuts: kitty --class cheatsheet-popup (see cheatsheet.sh)
+            pcall(window_rule, {
+              name  = "cheatsheet-popup",
+              match = { class = "^cheatsheet-popup$" },
+              float = true,
+              center = true,
+              size = { 800, 640 },
             })
             -- Wi-Fi: kitty --class nmtui-popup -e nmtui connect (see wifi.sh)
             pcall(window_rule, {
@@ -533,10 +579,11 @@ jobs:
           hl.bind(mod .. " + D",      hl.dsp.exec_cmd(menu))
           hl.bind(mod .. " + SPACE",  hl.dsp.exec_cmd("sh ~/.config/hypr/launcher.sh"))
           hl.bind(mod .. " + SHIFT + SPACE", hl.dsp.exec_cmd("sh ~/.config/hypr/palette.sh"))
+          hl.bind(mod .. " + SHIFT + W", hl.dsp.exec_cmd("sh ~/.config/hypr/wallpaper.sh"))
           hl.bind(mod .. " + P",      hl.dsp.exec_cmd("sh ~/.config/hypr/theme.sh"))
           hl.bind(mod .. " + ALT + SPACE", hl.dsp.exec_cmd("sh ~/.config/hypr/kb-switch.sh"))
           hl.bind(mod .. " + E",      hl.dsp.exec_cmd(files))
-          hl.bind(mod .. " + B",      hl.dsp.exec_cmd("brave"))
+          hl.bind(mod .. " + B",      hl.dsp.exec_cmd("sh /usr/share/cachyos-hyprland/brave-launch.sh"))
           hl.bind(mod .. " + L",      hl.dsp.exec_cmd("hyprlock"))
           hl.bind(mod .. " + X",      hl.dsp.exec_cmd("sh ~/.config/hypr/power.sh"))
           hl.bind(mod .. " + F1",     hl.dsp.exec_cmd("sh ~/.config/hypr/cheatsheet.sh"))
@@ -560,11 +607,11 @@ jobs:
           hl.bind(mod .. " + SHIFT + up",    hl.dsp.window.move({ direction = "up" }))
           hl.bind(mod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "down" }))
 
-          -- Workspaces: next/previous with . and , or Super + scroll
-          hl.bind(mod .. " + period",     hl.dsp.focus({ workspace = "e+1" }))
-          hl.bind(mod .. " + comma",      hl.dsp.focus({ workspace = "e-1" }))
-          hl.bind(mod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
-          hl.bind(mod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
+          -- Workspaces: only 1-3 exist. Next/previous with . and , or Super + scroll (wraps 3 -> 1)
+          hl.bind(mod .. " + period",     hl.dsp.exec_cmd("sh ~/.config/hypr/ws-go.sh next"))
+          hl.bind(mod .. " + comma",      hl.dsp.exec_cmd("sh ~/.config/hypr/ws-go.sh prev"))
+          hl.bind(mod .. " + mouse_down", hl.dsp.exec_cmd("sh ~/.config/hypr/ws-go.sh next"))
+          hl.bind(mod .. " + mouse_up",   hl.dsp.exec_cmd("sh ~/.config/hypr/ws-go.sh prev"))
 
           -- Screenshots: copied to the clipboard and saved to ~/screenshots
           hl.bind(mod .. " + SHIFT + S", hl.dsp.exec_cmd("sh ~/.config/hypr/screenshot.sh"))
@@ -578,8 +625,8 @@ jobs:
           hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd("brightnessctl set 5%+"), { locked = true, repeating = true })
           hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl set 5%-"), { locked = true, repeating = true })
 
-          -- Workspaces 1-9
-          for i = 1, 9 do
+          -- Workspaces 1-3
+          for i = 1, 3 do
             hl.bind(mod .. " + " .. i,           hl.dsp.focus({ workspace = i }))
             hl.bind(mod .. " + SHIFT + " .. i,   hl.dsp.window.move({ workspace = i }))
           end
@@ -594,13 +641,17 @@ jobs:
             "margin-left": 12,
             "margin-right": 12,
             "spacing": 6,
-            "modules-left": ["custom/launcher", "custom/separator", "hyprland/window"],
+            "modules-left": ["custom/launcher", "custom/separator", "group/workspaces", "hyprland/window"],
             "modules-right": ["idle_inhibitor", "tray", "network", "pulseaudio", "backlight",
                               "battery", "cpu", "memory", "hyprland/language",
                               "custom/separator2", "clock", "custom/power"],
-            "custom/launcher": { "format": " ", "tooltip": false, "on-click": "wofi --show drun", "on-click-right": "sh ~/.config/hypr/palette.sh" },
+            "custom/launcher": { "format": " ", "tooltip": false, "on-click": "sh ~/.config/hypr/launcher.sh", "on-click-right": "sh ~/.config/hypr/palette.sh" },
             "custom/separator": { "format": "", "tooltip": false },
             "custom/separator2": { "format": "", "tooltip": false },
+            "group/workspaces": { "orientation": "inherit", "modules": ["custom/ws1", "custom/ws2", "custom/ws3"] },
+            "custom/ws1": { "exec": "sh ~/.config/hypr/ws-state.sh 1", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 1" },
+            "custom/ws2": { "exec": "sh ~/.config/hypr/ws-state.sh 2", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 2" },
+            "custom/ws3": { "exec": "sh ~/.config/hypr/ws-state.sh 3", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 3" },
             "idle_inhibitor": {
               "format": "{icon}",
               "format-icons": { "activated": "\uf186", "deactivated": "\uf185" },
@@ -680,7 +731,7 @@ jobs:
           }
 
           /* ── Module pills ── */
-          #custom-launcher, #window, #tray, #network, #pulseaudio,
+          #custom-launcher, #workspaces, #window, #tray, #network, #pulseaudio,
           #idle_inhibitor, #backlight, #cpu, #memory, #language,
           #battery, #clock, #custom-power, #custom-separator, #custom-separator2 {
             background: @bg;
@@ -702,6 +753,30 @@ jobs:
             font-size: 15px;
             padding: 4px 16px;
             color: @accent;
+          }
+
+          /* ── Workspaces 1-3 ── */
+          #workspaces {
+            padding: 3px 4px;
+          }
+          #custom-ws1, #custom-ws2, #custom-ws3 {
+            min-width: 18px;
+            padding: 1px 10px;
+            margin: 0 1px;
+            border-radius: 9px;
+            font-weight: 600;
+            color: @text_dim;
+            transition: all 150ms ease;
+          }
+          #custom-ws1.occupied, #custom-ws2.occupied, #custom-ws3.occupied {
+            color: @text;
+          }
+          #custom-ws1:hover, #custom-ws2:hover, #custom-ws3:hover {
+            background: @accent_dim;
+          }
+          #custom-ws1.active, #custom-ws2.active, #custom-ws3.active {
+            background: @accent;
+            color: @on_primary;
           }
 
           /* ── Invisible separators ── */
@@ -933,10 +1008,10 @@ jobs:
           fi
 
           case "$choice" in
-            "App: Search all applications") exec wofi --show drun ;;
+            "App: Search all applications") exec wofi --show drun --prompt "Search apps" ;;
             "App: Terminal") exec kitty ;;
-            "App: Files") exec nautilus ;;
-            "App: Browser") exec brave ;;
+            "App: Files") exec thunar ;;
+            "App: Browser") exec sh /usr/share/cachyos-hyprland/brave-launch.sh ;;
             "Window: Toggle floating") hyprctl dispatch 'hl.dsp.window.float({ action = "toggle" })' ;;
             "Window: Toggle fullscreen") hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" })' ;;
             "Window: Close") hyprctl dispatch 'hl.dsp.window.close()' ;;
@@ -1060,7 +1135,7 @@ jobs:
               fastfetch
               echo
               set_color 8a8a8a
-              echo "  Super+D apps · Super+Space launcher · Super+P theme · Super+F1 shortcuts · Super+X power"
+              echo "  Super+Space apps · Super+Shift+Space commands · Super+P theme · Super+F1 shortcuts · Super+X power"
               set_color normal
           end
           function fish_prompt
@@ -1240,13 +1315,233 @@ jobs:
 
           cat > "$CONF/hypr/launcher.sh" <<'LAUNCHERSH'
           #!/bin/sh
-          # Super+Space: anyrun if it made it into the image, otherwise the command palette.
-          if command -v anyrun >/dev/null 2>&1 && [ -s "$HOME/.config/anyrun/config.ron" ]; then
-            if pkill -x anyrun; then exit 0; fi
-            exec anyrun
-          fi
-          exec sh "$HOME/.config/hypr/palette.sh"
+          # Super+Space, Super+D and the bar's square button: the app launcher (wofi drun).
+          # Pressing it again while it is open closes it.
+          if pkill -x wofi; then exit 0; fi
+          exec wofi --show drun --prompt "Search apps"
           LAUNCHERSH
+
+          # ---- Random wallpaper (every login / Super+Shift+W) ----
+          cat > "$CONF/hypr/wallpaper.sh" <<'WALLSH'
+          #!/bin/sh
+          # New random wallpaper (seed = current time). Runs at login and on Super+Shift+W.
+          # The old image is replaced, so only one copy ever exists. Also refreshes the page
+          # Brave shows as its new tab page (see brave-launch.sh) so it exists before Brave starts.
+          GEN=/usr/share/cachyos-hyprland/genwall.py
+          W="$HOME/.config/hypr/wallpaper.png"
+          if python3 "$GEN" png "$W.new" 2>/dev/null; then mv -f "$W.new" "$W"; else rm -f "$W.new"; fi
+          rm -f "$HOME"/.config/hypr/wallpaper-custom.*
+          pkill -x swaybg 2>/dev/null
+          setsid -f swaybg -i "$W" -m fill >/dev/null 2>&1
+          mkdir -p /tmp/cachyos-wall
+          python3 "$GEN" html /tmp/cachyos-wall/newtab.html 2>/dev/null
+          exit 0
+          WALLSH
+
+          # ---- Workspace buttons 1-2-3 (bar) ----
+          cat > "$CONF/hypr/ws-state.sh" <<'WSSTATE'
+          #!/bin/sh
+          # ws-state.sh N -> JSON for the bar button of workspace N (class: active / occupied / empty).
+          # State file is written by ws-daemon.py; without it workspace 1 counts as active.
+          n="${1:-1}"
+          active=1
+          occ=""
+          [ -r "${XDG_RUNTIME_DIR:-/tmp}/ws-state" ] && . "${XDG_RUNTIME_DIR:-/tmp}/ws-state"
+          cls=empty
+          case " $occ " in *" $n "*) cls=occupied ;; esac
+          [ "$active" = "$n" ] && cls=active
+          printf '{"text":"%s","class":"%s","tooltip":false}\n' "$n" "$cls"
+          WSSTATE
+
+          cat > "$CONF/hypr/ws-go.sh" <<'WSGO'
+          #!/bin/sh
+          # ws-go.sh 1|2|3|next|prev -> switch workspace. Only workspaces 1-3 exist; next/prev wrap around.
+          cur=$(hyprctl -j activeworkspace 2>/dev/null | sed -n 's/.*"id": *\([0-9][0-9]*\).*/\1/p' | head -n1)
+          case "$cur" in ''|*[!0-9]*) cur=1 ;; esac
+          case "${1:-}" in
+            next) n=$(( cur % 3 + 1 )) ;;
+            prev) n=$(( (cur + 1) % 3 + 1 )) ;;
+            1|2|3) n=$1 ;;
+            *) exit 1 ;;
+          esac
+          # Lua-config Hyprland takes the hl.dsp form; the plain form is the fallback for older builds.
+          hyprctl dispatch "hl.dsp.focus({ workspace = $n })" >/dev/null 2>&1
+          hyprctl dispatch workspace "$n" >/dev/null 2>&1
+          exit 0
+          WSGO
+
+          cat > "$CONF/hypr/ws-daemon.py" <<'WSDAEMON'
+          #!/usr/bin/env python3
+          # Keeps the bar's 1-2-3 workspace buttons in sync. Listens to Hyprland's event
+          # socket, writes the state to $XDG_RUNTIME_DIR/ws-state and pokes waybar
+          # (signal 8) only when something changed. ws-state.sh reads that file.
+          import glob, json, os, socket, subprocess, time
+
+          RT = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+          STATE = os.path.join(RT, "ws-state")
+          EVENTS = {"workspace", "workspacev2", "createworkspace", "createworkspacev2",
+                    "destroyworkspace", "destroyworkspacev2", "openwindow", "closewindow",
+                    "movewindow", "movewindowv2", "moveworkspace", "moveworkspacev2",
+                    "focusedmon", "focusedmonv2"}
+
+
+          def hc(what):
+              out = subprocess.run(["hyprctl", "-j", what], capture_output=True, text=True, timeout=3).stdout
+              return json.loads(out)
+
+
+          def waybar_ready():
+              # An RT signal sent to a waybar that is still starting up kills it, so only
+              # signal one that has been running for a few seconds.
+              for _ in range(8):
+                  try:
+                      out = subprocess.run(["ps", "-o", "etimes=", "-C", "waybar"],
+                                           capture_output=True, text=True, timeout=2).stdout.split()
+                  except Exception:
+                      return False
+                  if not out:
+                      return False
+                  if min(int(x) for x in out) >= 3:
+                      return True
+                  time.sleep(0.5)
+              return False
+
+
+          def update(last):
+              try:
+                  active = int(hc("activeworkspace")["id"])
+                  occ = sorted({int(w["id"]) for w in hc("workspaces") if w.get("windows", 0) > 0})
+              except Exception:
+                  return last
+              text = 'active=%d\nocc=" %s "\n' % (active, " ".join(map(str, occ)))
+              if text == last:
+                  return last
+              tmp = STATE + ".tmp"
+              with open(tmp, "w") as f:
+                  f.write(text)
+              os.replace(tmp, STATE)
+              if waybar_ready():
+                  subprocess.run(["pkill", "-RTMIN+8", "waybar"])
+              return text
+
+
+          def sock_path():
+              sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+              cands = [os.path.join(RT, "hypr", sig, ".socket2.sock")] if sig else []
+              cands += sorted(glob.glob(os.path.join(RT, "hypr", "*", ".socket2.sock")),
+                              key=os.path.getmtime, reverse=True)
+              for c in cands:
+                  if os.path.exists(c):
+                      return c
+              return None
+
+
+          def main():
+              path = None
+              for _ in range(20):
+                  path = sock_path()
+                  if path:
+                      break
+                  time.sleep(0.5)
+              if not path:
+                  return
+              s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+              s.connect(path)
+              last, buf, dirty = "", b"", True
+              while True:
+                  s.settimeout(0.08 if dirty else None)   # wait for a burst of events to settle
+                  try:
+                      data = s.recv(4096)
+                  except socket.timeout:
+                      last = update(last)
+                      dirty = False
+                      continue
+                  if not data:
+                      return
+                  buf += data
+                  *lines, buf = buf.split(b"\n")
+                  for line in lines:
+                      if line.split(b">>", 1)[0].decode("ascii", "ignore") in EVENTS:
+                          dirty = True
+
+
+          if __name__ == "__main__":
+              main()
+          WSDAEMON
+
+          # ---- Brave: quiet new tab page + random wallpaper on every start ----
+          # Brave's own dashboard (sponsored images, top sites, news, clock, cards) is replaced by a
+          # bare page showing the generated wallpaper: Preferences + a recommended policy point the
+          # homepage / "New Tab page shows" at it. The desktop file replaces the package's one so
+          # every way of starting Brave goes through brave-launch.sh.
+          cat > "$AIROOT/usr/share/cachyos-hyprland/brave-launch.sh" <<'BRAVELAUNCH'
+          #!/bin/sh
+          # Starts Brave with a brand-new random new-tab wallpaper (seed = current time).
+          # /tmp/cachyos-wall/newtab.html (picture embedded) is replaced on every start, so the
+          # old one is deleted and only one copy ever exists, in RAM. Brave's homepage and
+          # "New Tab page shows: Homepage" point at that file (see Preferences / policy).
+          mkdir -p /tmp/cachyos-wall
+          python3 /usr/share/cachyos-hyprland/genwall.py html /tmp/cachyos-wall/newtab.html 2>/dev/null
+          exec brave "$@"
+          BRAVELAUNCH
+
+          mkdir -p "$AIROOT/usr/share/applications" "$AIROOT/etc/brave/policies/recommended"
+          cat > "$AIROOT/usr/share/applications/brave-browser.desktop" <<'BRAVEDESKTOP'
+          [Desktop Entry]
+          Version=1.0
+          Name=Brave
+          GenericName=Web Browser
+          Comment=Access the Internet
+          Exec=sh /usr/share/cachyos-hyprland/brave-launch.sh %U
+          StartupNotify=true
+          Terminal=false
+          Icon=brave-browser
+          Type=Application
+          Categories=Network;WebBrowser;
+          MimeType=application/pdf;application/rdf+xml;application/rss+xml;application/xhtml+xml;application/xhtml_xml;application/xml;image/gif;image/jpeg;image/png;image/webp;text/html;text/xml;x-scheme-handler/http;x-scheme-handler/https;
+          StartupWMClass=Brave-browser
+          Actions=new-window;new-private-window;
+
+          [Desktop Action new-window]
+          Name=New Window
+          Exec=sh /usr/share/cachyos-hyprland/brave-launch.sh
+
+          [Desktop Action new-private-window]
+          Name=New Incognito Window
+          Exec=sh /usr/share/cachyos-hyprland/brave-launch.sh --incognito
+          BRAVEDESKTOP
+
+          cat > "$CONF/BraveSoftware/Brave-Browser/Default/Preferences" <<'BRAVEPREFS'
+          {
+            "brave": {
+              "new_tab_page": {
+                "shows_options": 1,
+                "hide_all_widgets": true,
+                "show_background_image": false,
+                "show_branded_background_image": false,
+                "show_clock": false,
+                "show_stats": false,
+                "show_rewards": false,
+                "show_together": false,
+                "show_brave_talk": false,
+                "show_brave_news": false,
+                "show_top_sites": false
+              },
+              "brave_news": { "opted_in": false, "show_on_ntp": false },
+              "today": { "should_show_toolbar_button": false }
+            },
+            "homepage": "file:///tmp/cachyos-wall/newtab.html",
+            "homepage_is_newtabpage": false
+          }
+          BRAVEPREFS
+
+          cat > "$AIROOT/etc/brave/policies/recommended/cachyos-hyprland.json" <<'BRAVEPOLICY'
+          {
+            "HomepageLocation": "file:///tmp/cachyos-wall/newtab.html",
+            "HomepageIsNewTabPage": false
+          }
+          BRAVEPOLICY
+
 
           # ---- matugen (Super+P): colour scheme from a wallpaper ----
           cat > "$CONF/matugen/config.toml" <<'MATUGENCONF'
@@ -1358,76 +1653,81 @@ jobs:
           # ---- First-run experience: cheatsheet, first-run popup, motd, README ----
           mkdir -p "$AIROOT/usr/share/cachyos-hyprland"
           cat > "$AIROOT/usr/share/cachyos-hyprland/cheatsheet.txt" <<'CHEATTXT'
-          ═══════════════════════════════════════════════════════════════
-            CACHYOS HYPRLAND — KEYBOARD SHORTCUTS
-          ═══════════════════════════════════════════════════════════════
+          # LAUNCH
+          Super + Return|Terminal (kitty)
+          Super + Space / D|Apps (same launcher as the bar's square button)
+          Super + Shift + Space|Command palette
+          Super + P|Pick a wallpaper, recolour bar + terminal (matugen)
+          Super + Shift + W|New random wallpaper
+          Super + B|Browser (brave)
+          Super + E|Files (thunar)
+          Super + F1|This window
 
-            LAUNCH
-              Super + Return       Terminal (kitty)
-              Super + D            Application launcher (wofi)
-              Super + Space        Launcher (anyrun)
-              Super + Shift + Space  Command palette
-              Super + P            Pick a wallpaper, recolour bar + terminal (matugen)
-              Super + B            Browser (brave)
-              Super + E            Files (nautilus)
-              Super + F1           This cheatsheet
+          # WINDOWS
+          Super + Q|Close window
+          Super + V|Toggle floating
+          Super + F|Toggle fullscreen
+          Super + Arrows|Focus window in direction
+          Super + Shift + Arrows|Move window
+          Super + Drag|Move window (mouse)
+          Super + Right-drag|Resize window
 
-            WINDOWS
-              Super + Q            Close window
-              Super + V            Toggle floating
-              Super + F            Toggle fullscreen
-              Super + Arrow keys   Focus window in direction
-              Super + Shift + ←↑↓→ Move window
-              Super + Drag (mouse) Move window
-              Super + Right-drag   Resize window
+          # WORKSPACES (1, 2 and 3)
+          Super + 1 / 2 / 3|Switch to workspace
+          Super + Shift + 1 / 2 / 3|Move window to workspace
+          Super + , / .|Previous / next workspace
+          Super + Scroll|Cycle workspaces
+          Bar buttons 1 2 3|Click to switch
 
-            WORKSPACES
-              Super + 1..9         Switch to workspace
-              Super + Shift + 1..9 Move window to workspace
-              Super + , / .        Previous / next workspace
-              Super + Scroll       Cycle workspaces
+          # SYSTEM
+          Super + L|Lock screen
+          Super + X|Power menu
+          Super + Shift + R|Reload Hyprland config
+          Super + Shift + E|Log out
+          Super + Alt + Space|Switch keyboard layout (us/de/fr/es)
 
-            SYSTEM
-              Super + L            Lock screen
-              Super + X            Power menu
-              Super + Shift + R    Reload Hyprland config
-              Super + Shift + E    Log out
-              Super + Alt + Space  Switch keyboard layout (us/de/fr/es)
+          # SCREENSHOTS
+          Print|Area -> clipboard + ~/screenshots/
+          Super + Print|Full screen -> ~/screenshots/
+          Super + Shift + S|Same as Print
 
-            SCREENSHOTS
-              Print                Area → clipboard + ~/screenshots/
-              Super + Print        Full screen → ~/screenshots/
-              Super + Shift + S    Same as Print
+          # MEDIA
+          Volume / Brightness keys|Work as expected
+          Super + Shift + Space|"Audio:" / "Display:" entries in the palette
 
-            MEDIA
-              Volume / Brightness  Dedicated keys work
-              Super + Shift + Space  "Audio:" / "Display:" entries in palette
+          # BAR
+          Click Wi-Fi|Wi-Fi list (nmtui)
+          Click volume|Audio mixer, opens under the button
+          Click language|Layout dropdown
+          Double-click clock|Set timezone (type 5:30, 5, -8 ...)
+          Right-click square button|Command palette
 
-            WAYBAR
-              Click WiFi           Wi-Fi list (nmtui)
-              Click volume         Audio mixer, opens under the button
-              Click language       Layout dropdown
-              Double-click clock   Set timezone (type 5:30, 5, -8 ...)
-              Right-click launcher Command palette
-
-          ───────────────────────────────────────────────────────────────
-            Full docs: https://wiki.hypr.land/
-          ═══════════════════════════════════════════════════════════════
+          # MORE
+          Docs|https://wiki.hypr.land/
           CHEATTXT
 
           cat > "$CONF/hypr/cheatsheet.sh" <<'CHEATSH'
           #!/bin/sh
-          # Show the keyboard shortcuts in a floating GTK window.
-          # (text-info shows plain text, so no --no-markup: not every zenity accepts it
-          # there, and with `exec` a rejected flag would skip the kitty fallback.)
+          # Super+F1: keyboard shortcuts in a floating, colour-coded terminal window (kitty).
+          # Scroll with the mouse or arrow keys, "/" searches, "q" or Super+F1 closes it.
+          # The "cheatsheet-popup" window rule in hyprland.lua floats and centres it.
           CHEAT=/usr/share/cachyos-hyprland/cheatsheet.txt
-          if command -v zenity >/dev/null 2>&1; then
-            exec zenity --text-info \
-              --title="CachyOS Hyprland — Keyboard Shortcuts" \
-              --filename="$CHEAT" --width=760 --height=680 \
-              --font="Noto Sans Mono 10"
+          if [ "${1:-}" = view ]; then
+            awk -F'|' '
+              BEGIN {
+                a = "\033[1;38;2;180;190;254m"; k = "\033[38;2;249;226;175m"
+                d = "\033[38;2;110;110;130m";   r = "\033[0m"
+                printf "\n  %sCachyOS Hyprland  -  keyboard shortcuts%s\n", a, r
+                printf "  %sscroll or arrow keys  /  search  q closes%s\n", d, r
+              }
+              /^#/ { sub(/^# */, ""); printf "\n  %s%s%s\n", a, $0, r; next }
+              NF >= 2 { printf "    %s%-28s%s %s\n", k, $1, r, $2 }
+            ' "$CHEAT" | less -R
+            exit 0
           fi
-          exec kitty -o confirm_os_window_close=0 -T "Shortcuts" -e less "$CHEAT"
+          if pkill -f 'kitty --class cheatsheet-popup'; then exit 0; fi
+          exec kitty --class cheatsheet-popup -T "Keyboard shortcuts" -o confirm_os_window_close=0 \
+            -e sh "$HOME/.config/hypr/cheatsheet.sh" view
           CHEATSH
 
           cat > "$CONF/hypr/first-run.sh" <<'FIRSTRUN'
@@ -1473,8 +1773,7 @@ jobs:
             - "safe mode": for GPUs that fail with the default driver
 
           After boot
-            Super+D       app launcher
-            Super+Space   launcher (anyrun)
+            Super+Space   app launcher (also Super+D)
             Super+Shift+Space  command palette
             Super+P       wallpaper colours (matugen)
             Super+F1      keyboard shortcuts
@@ -1996,34 +2295,6 @@ jobs:
             ln -sf /dev/null "$SYSD/$t"
           done
 
-      - name: Add anyrun to the live image (skipped if it was not built)
-        env:
-          ANYRUN_PKG: ${{ steps.anyrun.outputs.pkg }}
-        run: |
-          set -euo pipefail
-          AIROOT="cachyos/archiso/airootfs"
-          PKG_LIST="cachyos/archiso/packages_desktop.x86_64"
-          skip() {
-            echo "::warning::anyrun: $1; the ISO ships without it and Super+Space opens the command palette."
-            echo "anyrun: **not included** ($1)" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          }
-          if [ -z "${ANYRUN_PKG:-}" ] || [ ! -f "$ANYRUN_PKG" ]; then skip "AUR build failed"; fi
-          lib=$(bsdtar -tf "$ANYRUN_PKG" | grep -E '(^|/)libapplications\.so$' | head -n1 || true)
-          bin=$(bsdtar -tf "$ANYRUN_PKG" | grep -E '^usr/bin/anyrun$' || true)
-          if [ -z "$lib" ] || [ -z "$bin" ]; then skip "package has no usr/bin/anyrun or libapplications.so"; fi
-          bsdtar -xpf "$ANYRUN_PKG" -C "$AIROOT" \
-            --exclude .PKGINFO --exclude .MTREE --exclude .BUILDINFO --exclude .INSTALL --exclude .CHANGELOG
-          # runtime library of the GTK4 frontend (small); everything else is already in the image
-          grep -qxF gtk4-layer-shell "$PKG_LIST" || echo gtk4-layer-shell >> "$PKG_LIST"
-          mkdir -p "$AIROOT/etc/skel/.config/anyrun"
-          printf 'Config(\n  plugins: ["/%s"],\n)\n' "$lib" > "$AIROOT/etc/skel/.config/anyrun/config.ron"
-          # make sure the binary stays executable inside the image
-          while IFS= read -r pd; do
-            sedx -o "$pd" '/^file_permissions=(/a\["/usr/bin/anyrun"]="0:0:755"'
-          done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
-          echo "anyrun: included ($(basename "$ANYRUN_PKG"))" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Patch Boot Entries
         run: |
           set -euo pipefail
@@ -2114,7 +2385,7 @@ jobs:
           fail=0
           PKG_LIST=cachyos/archiso/packages_desktop.x86_64
 
-          for pkg in plasma-desktop plasma-login-manager linux-cachyos-lts firefox thunar; do
+          for pkg in plasma-desktop plasma-login-manager linux-cachyos-lts firefox nautilus; do
             if grep -qxF "$pkg" "$PKG_LIST"; then echo "VERIFY FAIL: $pkg still in package list" >&2; fail=1; fi
           done
           if grep -q 'plasmalogin\.service' cachyos/util-iso.sh; then
@@ -2126,12 +2397,12 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/ws-daemon.py usr/share/cachyos-hyprland/genwall.py usr/share/cachyos-hyprland/brave-launch.sh usr/share/applications/brave-browser.desktop etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences etc/brave/policies/recommended/cachyos-hyprland.json; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
           [ -s cachyos/archiso/README.txt ] \
             || { echo "VERIFY FAIL: missing/empty archiso/README.txt" >&2; fail=1; }
-          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh popup-pos.sh kb-menu.sh clock-click.sh tz-prompt.sh wifi.sh volume.sh launcher.sh theme.sh; do
+          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh popup-pos.sh kb-menu.sh clock-click.sh tz-prompt.sh wifi.sh volume.sh launcher.sh theme.sh wallpaper.sh ws-state.sh ws-go.sh; do
             if ! sh -n "cachyos/archiso/airootfs/etc/skel/.config/hypr/$sh_file"; then
               echo "VERIFY FAIL: $sh_file has a shell syntax error" >&2; fail=1
             fi
@@ -2140,7 +2411,7 @@ jobs:
             echo "VERIFY FAIL: Super+Shift+S is not bound to the screenshot script" >&2; fail=1
           fi
           if ! grep -q '" + SPACE".*launcher\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
-            echo "VERIFY FAIL: Super+Space is not bound to launcher.sh (anyrun)" >&2; fail=1
+            echo "VERIFY FAIL: Super+Space is not bound to launcher.sh" >&2; fail=1
           fi
           if ! grep -q 'SHIFT + SPACE.*palette\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: Super+Shift+Space is not bound to the command palette" >&2; fail=1
@@ -2148,19 +2419,38 @@ jobs:
           if ! grep -q '" + P".*theme\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: Super+P is not bound to theme.sh (matugen)" >&2; fail=1
           fi
-          if ! grep -q 'local files = "nautilus"' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
-            echo "VERIFY FAIL: Super+E does not open nautilus" >&2; fail=1
+          if ! grep -q 'local files = "thunar"' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
+            echo "VERIFY FAIL: Super+E does not open thunar" >&2; fail=1
           fi
           if ! grep -q 'ALT + SPACE.*kb-switch\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
             echo "VERIFY FAIL: Super+Alt+Space is not bound to kb-switch.sh" >&2; fail=1
           fi
-          if grep -q 'ws-watch\.sh' cachyos/archiso/airootfs/etc/skel/.config/hypr/hyprland.lua; then
-            echo "VERIFY FAIL: hyprland.lua still starts ws-watch.sh" >&2; fail=1
+          R=cachyos/archiso/airootfs/etc/skel/.config
+          if ! grep -q 'ws-daemon\.py' "$R/hypr/hyprland.lua"; then
+            echo "VERIFY FAIL: hyprland.lua does not start ws-daemon.py" >&2; fail=1
           fi
-          if grep -q 'hyprland/workspaces\|custom/ws1' cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc; then
-            echo "VERIFY FAIL: waybar must not show the workspace numbers" >&2; fail=1
+          if grep -q 'for i = 1, 9' "$R/hypr/hyprland.lua" || ! grep -q 'for i = 1, 3 do' "$R/hypr/hyprland.lua"; then
+            echo "VERIFY FAIL: workspace binds must cover 1-3 only" >&2; fail=1
           fi
-          for want in wifi.sh volume.sh kb-menu.sh clock-click.sh 'power.sh bar'; do
+          if grep -q 'hyprland/workspaces' "$R/waybar/config.jsonc"; then
+            echo "VERIFY FAIL: waybar must use the custom 1-2-3 buttons, not hyprland/workspaces" >&2; fail=1
+          fi
+          for w in custom/ws1 custom/ws2 custom/ws3 group/workspaces; do
+            grep -qF "$w" "$R/waybar/config.jsonc" || { echo "VERIFY FAIL: waybar config has no $w" >&2; fail=1; }
+          done
+          if grep -rqi 'anyrun\|nautilus' cachyos/archiso/airootfs/etc/skel cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
+            echo "VERIFY FAIL: leftover anyrun/nautilus reference in the shipped config" >&2; fail=1
+          fi
+          for j in "$R/BraveSoftware/Brave-Browser/Default/Preferences" cachyos/archiso/airootfs/etc/brave/policies/recommended/cachyos-hyprland.json; do
+            python3 -m json.tool "$j" >/dev/null || { echo "VERIFY FAIL: $j is not valid JSON" >&2; fail=1; }
+          done
+          for py in "$R/hypr/ws-daemon.py" cachyos/archiso/airootfs/usr/share/cachyos-hyprland/genwall.py; do
+            python3 -m py_compile "$py" || { echo "VERIFY FAIL: $py has a Python syntax error" >&2; fail=1; }
+          done
+          sh -n cachyos/archiso/airootfs/usr/share/cachyos-hyprland/brave-launch.sh \
+            || { echo "VERIFY FAIL: brave-launch.sh syntax error" >&2; fail=1; }
+
+          for want in wifi.sh volume.sh kb-menu.sh clock-click.sh launcher.sh ws-go.sh 'power.sh bar'; do
             if ! grep -qF "$want" cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc; then
               echo "VERIFY FAIL: waybar config does not call $want" >&2; fail=1
             fi
