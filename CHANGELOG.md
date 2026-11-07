@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.2
+
+### Added
+- `save-progress` command: run it in a terminal to save your home folder (files up to 10 MB each) to the USB you booted from. Next boot the ISO finds the saved data and restores it automatically ("FOUND DATA! TRANSFERRING OVER..."), so browser logins and files survive reboots. Works with USBs written by balenaEtcher / Rufus DD mode (creates a small save partition) and with Ventoy / Rufus ISO mode (saves a folder on the USB).
+- Inter is now the UI font (bar, launcher, notifications, lock screen, GTK apps).
+- Chinese text now displays correctly (WenQuanYi Micro Hei is included as the fallback font).
+- The welcome box and `README.txt` now explain how to keep your files.
+
+### Changed
+- Brave now uses `--password-store=basic` so logins saved with `save-progress` open again after a reboot.
+
+### Removed
+- Brave's custom random-wallpaper new tab page and homepage override. Brave starts as normal, with its sponsored images, widgets and news still turned off.
+
+### Notes
+- The ISO is about 20 MB larger because of the new fonts.
+- The save is not encrypted. Keep the USB safe. Installed programs and system settings are not saved.
+
 ## [1.1.1] - 2026-11-07
 
 ### Added
