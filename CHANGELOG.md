@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.1.1] - 2026-11-07
+
+### Added
+- Workspace buttons 1 2 3 in the top bar; the active workspace is highlighted and workspaces with windows are brighter.
+- A new random wallpaper at every login, so it is different each time. Press Super+Shift+W for another one.
+- Brave opens a plain new tab page showing a freshly generated random wallpaper on every start (the old one is deleted). Sponsored images, top sites, Brave News, the clock and cards are turned off.
+- Thunar file manager, with gvfs (trash and mounts) and tumbler (thumbnails).
+
+### Changed
+- Super+Space now opens the same app launcher as the square button in the bar. Super+D does the same, and pressing it again closes it.
+- Thunar replaces Nautilus as the file manager (Super+E, the command palette).
+- The Keyboard Shortcuts window (Super+F1) is now a floating, colour-coded, searchable terminal window.
+- Only workspaces 1 to 3 exist. Super+, / Super+. and Super+scroll cycle between them.
+
+### Removed
+- anyrun and its AUR build step, which makes builds faster.
+- Nautilus.
+
+### Fixed
+- The file picker for Super+P could open tiled instead of floating on newer zenity.
+
 ## [1.1.0] - 2026-11-07
 
 #### New
