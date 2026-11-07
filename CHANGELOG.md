@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.1.0] - 2026-11-07
+
+#### New
+- **Wallpaper colours.** Press **Super+P**, pick any image, and it becomes your wallpaper. The top bar and the terminal are recoloured to match it. You can also run it from the command palette ("System: Wallpaper theme").
+- **anyrun launcher.** **Super+Space** now opens anyrun, a fast app launcher. If anyrun can't be included in a build, Super+Space opens the command palette instead.
+- **Set your timezone from the clock.** Double-click the clock in the top bar and type a UTC offset (`5:30`, `5`, `-8`) or a zone name such as `Asia/Kolkata`. Hovering over the clock shows the full date and a calendar.
+- **Keyboard layout menu.** Click the layout indicator in the top bar to pick US, German, French or Spanish from a dropdown. **Super+Alt+Space** still cycles through them.
+- **Your btop settings.** btop starts with the horizon colour theme and a ready-made layout.
+
+#### Changed
+- **Nautilus replaces Thunar** as the file manager (**Super+E**). Nautilus can extract and compress archives by itself, and File Roller is still included.
+- **Command palette moved to Super+Shift+Space**, since Super+Space is now the launcher.
+- **Top bar menus open under their button.** The power menu, Wi-Fi list, volume mixer and layout menu all appear right below the button you clicked.
+- **Simpler power menu.** It now uses the same look as the app launcher and command palette.
+- **Wi-Fi click** now opens a compact floating Wi-Fi list that is ready to connect. Click again to close it.
+- **Workspace buttons removed** from the top bar to give it more room. Workspaces still work with the usual shortcuts.
+- **The clock** no longer switches to the date when clicked, because the date is in its tooltip.
+- The shortcuts cheatsheet, welcome message and terminal greeting list the new shortcuts.
+
+#### Removed
+- Thunar and its archive plugin.
+- The separate power menu stylesheet.
+
 ## [1.0.5] - 2026-11-07
 
 #### New
