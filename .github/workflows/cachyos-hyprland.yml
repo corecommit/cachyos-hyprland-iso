@@ -247,6 +247,8 @@ jobs:
             noto-fonts-emoji
             # matugen: Material You colours from a wallpaper (Super+P)
             matugen
+            # inter-font: UI font (~15 MB). wqy-microhei: small CJK font so Chinese text shows (~5 MB)
+            inter-font wqy-microhei
           )
 
           REMOVE=(
@@ -394,13 +396,12 @@ jobs:
           """Random dark wallpaper made of soft colour glows (pure python, no dependencies).
 
           usage: genwall.py png  OUT.png    write a wallpaper
-                 genwall.py html OUT.html   write a bare web page showing one (Brave's new tab page)
 
           The seed is the current time, so every run gives a different picture. The file is
           written next to its destination and moved over the old one, so the old picture is
           deleted and only one copy ever exists.
           """
-          import base64, colorsys, math, os, random, struct, sys, time, zlib
+          import colorsys, math, os, random, struct, sys, time, zlib
 
           W, H = 384, 216   # small on purpose: fast to make, smooth glows scale up cleanly
 
@@ -451,19 +452,9 @@ jobs:
 
 
           def main():
-              if len(sys.argv) != 3 or sys.argv[1] not in ("png", "html"):
+              if len(sys.argv) != 3 or sys.argv[1] != "png":
                   sys.exit(__doc__)
-              kind, out = sys.argv[1], sys.argv[2]
-              png = render(time.time_ns())
-              if kind == "png":
-                  write_atomic(out, png)
-                  return
-              b64 = base64.b64encode(png).decode()
-              page = ('<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>New Tab</title>\n'
-                      '<style>html,body{margin:0;height:100%%;background:#000}'
-                      'body{background:#000 url(data:image/png;base64,%s) center/cover no-repeat}</style>\n'
-                      '</head><body></body></html>\n') % b64
-              write_atomic(out, page.encode())
+              write_atomic(sys.argv[2], render(time.time_ns()))
 
 
           if __name__ == "__main__":
@@ -583,7 +574,7 @@ jobs:
           hl.bind(mod .. " + P",      hl.dsp.exec_cmd("sh ~/.config/hypr/theme.sh"))
           hl.bind(mod .. " + ALT + SPACE", hl.dsp.exec_cmd("sh ~/.config/hypr/kb-switch.sh"))
           hl.bind(mod .. " + E",      hl.dsp.exec_cmd(files))
-          hl.bind(mod .. " + B",      hl.dsp.exec_cmd("sh /usr/share/cachyos-hyprland/brave-launch.sh"))
+          hl.bind(mod .. " + B",      hl.dsp.exec_cmd("brave"))
           hl.bind(mod .. " + L",      hl.dsp.exec_cmd("hyprlock"))
           hl.bind(mod .. " + X",      hl.dsp.exec_cmd("sh ~/.config/hypr/power.sh"))
           hl.bind(mod .. " + F1",     hl.dsp.exec_cmd("sh ~/.config/hypr/cheatsheet.sh"))
@@ -717,7 +708,7 @@ jobs:
           @define-color crit @error;
 
           * {
-            font-family: "Noto Sans", "Font Awesome 6 Free", sans-serif;
+            font-family: "Inter", "WenQuanYi Micro Hei", "Font Awesome 6 Free", sans-serif;
             font-size: 13px;
             font-weight: 500;
             border: none;
@@ -879,7 +870,7 @@ jobs:
             border: 1px solid #2a2a2a;
             border-radius: 16px;
             background-color: rgba(0, 0, 0, 0.94);
-            font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+            font-family: "Inter", "WenQuanYi Micro Hei", "Noto Sans", "DejaVu Sans", sans-serif;
             font-size: 15px;
           }
           #outer-box { margin: 14px; background-color: transparent; }
@@ -905,12 +896,40 @@ jobs:
           cat > "$CONF/gtk-3.0/settings.ini" <<'GTK3INI'
           [Settings]
           gtk-application-prefer-dark-theme=1
+          gtk-font-name=Inter 10
           GTK3INI
 
           cat > "$CONF/gtk-4.0/settings.ini" <<'GTK4INI'
           [Settings]
           gtk-application-prefer-dark-theme=1
+          gtk-font-name=Inter 10
           GTK4INI
+
+          # System-wide font preference: Inter first; Chinese characters Inter lacks fall back to
+          # WenQuanYi Micro Hei (also behind monospace, so kitty shows Chinese too).
+          mkdir -p "$AIROOT/etc/fonts/conf.d"
+          cat > "$AIROOT/etc/fonts/conf.d/52-cachyos-hyprland.conf" <<'FONTCONF'
+          <?xml version="1.0"?>
+          <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+          <fontconfig>
+            <alias>
+              <family>sans-serif</family>
+              <prefer>
+                <family>Inter</family>
+                <family>WenQuanYi Micro Hei</family>
+              </prefer>
+            </alias>
+            <alias>
+              <family>Inter</family>
+              <accept><family>WenQuanYi Micro Hei</family></accept>
+            </alias>
+            <alias>
+              <family>monospace</family>
+              <accept><family>WenQuanYi Micro Hei</family></accept>
+            </alias>
+          </fontconfig>
+          FONTCONF
+          python3 -c 'import sys, xml.dom.minidom as m; m.parse(sys.argv[1])' "$AIROOT/etc/fonts/conf.d/52-cachyos-hyprland.conf"
 
           cat > "$CONF/brave-flags.conf" <<'BRAVEFLAGS'
           # One flag per line. Read by the brave launcher.
@@ -919,6 +938,8 @@ jobs:
           # The live home is RAM: keep the cache small and use fewer renderer processes.
           --disk-cache-size=52428800
           --process-per-site
+          # Fixed cookie/password key, so logins saved with save-progress still open next boot.
+          --password-store=basic
           BRAVEFLAGS
 
 
@@ -1011,7 +1032,7 @@ jobs:
             "App: Search all applications") exec wofi --show drun --prompt "Search apps" ;;
             "App: Terminal") exec kitty ;;
             "App: Files") exec thunar ;;
-            "App: Browser") exec sh /usr/share/cachyos-hyprland/brave-launch.sh ;;
+            "App: Browser") exec brave ;;
             "Window: Toggle floating") hyprctl dispatch 'hl.dsp.window.float({ action = "toggle" })' ;;
             "Window: Toggle fullscreen") hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" })' ;;
             "Window: Close") hyprctl dispatch 'hl.dsp.window.close()' ;;
@@ -1325,16 +1346,13 @@ jobs:
           cat > "$CONF/hypr/wallpaper.sh" <<'WALLSH'
           #!/bin/sh
           # New random wallpaper (seed = current time). Runs at login and on Super+Shift+W.
-          # The old image is replaced, so only one copy ever exists. Also refreshes the page
-          # Brave shows as its new tab page (see brave-launch.sh) so it exists before Brave starts.
+          # The old image is replaced, so only one copy ever exists.
           GEN=/usr/share/cachyos-hyprland/genwall.py
           W="$HOME/.config/hypr/wallpaper.png"
           if python3 "$GEN" png "$W.new" 2>/dev/null; then mv -f "$W.new" "$W"; else rm -f "$W.new"; fi
           rm -f "$HOME"/.config/hypr/wallpaper-custom.*
           pkill -x swaybg 2>/dev/null
           setsid -f swaybg -i "$W" -m fill >/dev/null 2>&1
-          mkdir -p /tmp/cachyos-wall
-          python3 "$GEN" html /tmp/cachyos-wall/newtab.html 2>/dev/null
           exit 0
           WALLSH
 
@@ -1469,49 +1487,8 @@ jobs:
               main()
           WSDAEMON
 
-          # ---- Brave: quiet new tab page + random wallpaper on every start ----
-          # Brave's own dashboard (sponsored images, top sites, news, clock, cards) is replaced by a
-          # bare page showing the generated wallpaper: Preferences + a recommended policy point the
-          # homepage / "New Tab page shows" at it. A user-level desktop file overrides the package's
-          # one (never ship /usr/share/applications/brave-browser.desktop: it conflicts with brave-bin,
-          # because this build copies airootfs BEFORE installing packages).
-          cat > "$AIROOT/usr/share/cachyos-hyprland/brave-launch.sh" <<'BRAVELAUNCH'
-          #!/bin/sh
-          # Starts Brave with a brand-new random new-tab wallpaper (seed = current time).
-          # /tmp/cachyos-wall/newtab.html (picture embedded) is replaced on every start, so the
-          # old one is deleted and only one copy ever exists, in RAM. Brave's homepage and
-          # "New Tab page shows: Homepage" point at that file (see Preferences / policy).
-          mkdir -p /tmp/cachyos-wall
-          python3 /usr/share/cachyos-hyprland/genwall.py html /tmp/cachyos-wall/newtab.html 2>/dev/null
-          exec brave "$@"
-          BRAVELAUNCH
-
-          mkdir -p "$CONF/../.local/share/applications" "$AIROOT/etc/brave/policies/recommended"
-          cat > "$CONF/../.local/share/applications/brave-browser.desktop" <<'BRAVEDESKTOP'
-          [Desktop Entry]
-          Version=1.0
-          Name=Brave
-          GenericName=Web Browser
-          Comment=Access the Internet
-          Exec=sh /usr/share/cachyos-hyprland/brave-launch.sh %U
-          StartupNotify=true
-          Terminal=false
-          Icon=brave-browser
-          Type=Application
-          Categories=Network;WebBrowser;
-          MimeType=application/pdf;application/rdf+xml;application/rss+xml;application/xhtml+xml;application/xhtml_xml;application/xml;image/gif;image/jpeg;image/png;image/webp;text/html;text/xml;x-scheme-handler/http;x-scheme-handler/https;
-          StartupWMClass=Brave-browser
-          Actions=new-window;new-private-window;
-
-          [Desktop Action new-window]
-          Name=New Window
-          Exec=sh /usr/share/cachyos-hyprland/brave-launch.sh
-
-          [Desktop Action new-private-window]
-          Name=New Incognito Window
-          Exec=sh /usr/share/cachyos-hyprland/brave-launch.sh --incognito
-          BRAVEDESKTOP
-
+          # ---- Brave: quiet new tab page (no sponsored images, widgets, news) ----
+          # Plain Brave, no custom launcher or wallpaper page.
           cat > "$CONF/BraveSoftware/Brave-Browser/Default/Preferences" <<'BRAVEPREFS'
           {
             "brave": {
@@ -1530,19 +1507,9 @@ jobs:
               },
               "brave_news": { "opted_in": false, "show_on_ntp": false },
               "today": { "should_show_toolbar_button": false }
-            },
-            "homepage": "file:///tmp/cachyos-wall/newtab.html",
-            "homepage_is_newtabpage": false
+            }
           }
           BRAVEPREFS
-
-          cat > "$AIROOT/etc/brave/policies/recommended/cachyos-hyprland.json" <<'BRAVEPOLICY'
-          {
-            "HomepageLocation": "file:///tmp/cachyos-wall/newtab.html",
-            "HomepageIsNewTabPage": false
-          }
-          BRAVEPOLICY
-
 
           # ---- matugen (Super+P): colour scheme from a wallpaper ----
           cat > "$CONF/matugen/config.toml" <<'MATUGENCONF'
@@ -1749,6 +1716,7 @@ jobs:
           │                                                  │
           │  Everything runs in RAM (toram). Changes are     │
           │  lost on reboot.                                 │
+          │  Keep your files: run  save-progress             │
           │                                                  │
           │  Keyboard: Super+F1 · Power menu: Super+X        │
           ╰──────────────────────────────────────────────────╯
@@ -1779,6 +1747,16 @@ jobs:
             Super+P       wallpaper colours (matugen)
             Super+F1      keyboard shortcuts
             Super+X       power menu
+
+          Keep your files and logins
+            Run `save-progress` in a terminal. It saves your home folder (files up
+            to 10 MB each) to the USB you booted from. Next boot, they come back
+            automatically ("FOUND DATA!"). Works if the USB was made with:
+              - balenaEtcher, or Rufus "DD Image" mode (makes a small save partition
+                in the free space after the ISO)
+              - Ventoy, or Rufus "ISO" mode (saves a folder on the USB)
+            Not saved: installed programs and system settings. The save is not
+            encrypted, so keep the USB safe.
 
           Verify download
             sha256sum -c <file>.iso.sha256
@@ -2125,7 +2103,7 @@ jobs:
               text = $TIME
               color = rgba(224, 224, 224, 1.0)
               font_size = 96
-              font_family = Noto Sans
+              font_family = Inter
               position = 0, 120
               halign = center
               valign = center
@@ -2135,7 +2113,7 @@ jobs:
               text = cmd[update:60000] date +"%A, %d %B"
               color = rgba(180, 190, 254, 1.0)
               font_size = 20
-              font_family = Noto Sans
+              font_family = Inter
               position = 0, 20
               halign = center
               valign = center
@@ -2143,7 +2121,7 @@ jobs:
           HYPRLOCK
 
           cat > "$CONF/mako/config" <<'MAKOCONF'
-          font=Noto Sans 11
+          font=Inter 11
           background-color=#0a0a12ee
           text-color=#e0e0e0
           border-color=#b4befe
@@ -2296,6 +2274,300 @@ jobs:
             ln -sf /dev/null "$SYSD/$t"
           done
 
+      - name: Add save-progress (save/restore your files on the boot USB)
+        run: |
+          set -euo pipefail
+          AIROOT="cachyos/archiso/airootfs"
+          SYSD="$AIROOT/etc/systemd/system"
+          LIVE_USER=$(grep -m1 -oP '^user = "\K[^"@]+' "$AIROOT/etc/greetd/config.toml" || true)
+          LIVE_USER=${LIVE_USER:-liveuser}
+          echo "save-progress: live user is $LIVE_USER"
+
+          mkdir -p "$AIROOT/usr/local/bin" "$SYSD/multi-user.target.wants"
+          cat > "$AIROOT/usr/local/bin/save-progress" <<'SAVEPROGRESS'
+          #!/bin/bash
+          # save-progress          - save your files onto the USB you booted from.
+          # save-progress --restore - (runs automatically at boot) bring them back.
+          #
+          # Works however the USB was made:
+          #   * raw/DD image (balenaEtcher, Rufus "DD Image", dd): makes a small CPSAVE partition
+          #     in the free space after the ISO
+          #   * Rufus "ISO mode" / Ventoy / any normal USB stick: saves into a folder
+          #     (cachyos-hyprland-save) on the stick's biggest normal partition
+          # What is saved: the live user's home folder, except files over 10 MB and caches.
+          set -u
+
+          LIVE_USER="@LIVE_USER@"
+          LABEL="CPSAVE"
+          SAVE_SUBDIR="cachyos-hyprland-save"
+          ARCHIVE="progress.tar.zst"
+          VERSION_FILE="progress.version"
+          MNT="/run/progress-usb"
+          MIN_SECTORS=131072                      # 64 MiB free space needed to create CPSAVE
+          FS_OK="vfat exfat ntfs ext2 ext3 ext4 btrfs f2fs xfs"
+          SKIP_LABELS=" VTOYEFI ARCHISO_EFI "     # boot helper partitions: never save there
+
+          HOME_DIR=$(getent passwd "$LIVE_USER" | cut -d: -f6)
+          HOME_DIR=${HOME_DIR:-/home/$LIVE_USER}
+          ISO_VERSION=$(sed -n 's/^VERSION="\(.*\)"/\1/p' /etc/cachyos-hyprland-release 2>/dev/null)
+
+          [ "$(id -u)" -eq 0 ] || exec sudo -- "$(readlink -f "$0")" "$@"
+
+          say() { printf '%s\n' "$*"; }
+          die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+          # ----------------------------------------------------------- device helpers
+          # One line per block device: name type parent size fstype label tran removable
+          # (fields separated by \001 so empty ones survive; read with IFS=$'\001')
+          rows() { lsblk -rpbno NAME,TYPE,PKNAME,SIZE,FSTYPE,LABEL,TRAN,RM 2>/dev/null | tr ' ' '\001'; }
+
+          usb_disks() {   # USB / removable whole disks that actually have media
+            local name type pk size fs label tran rm
+            rows | while IFS=$'\001' read -r name type pk size fs label tran rm; do
+              [ "$type" = disk ] && [ "${size:-0}" -gt 0 ] || continue
+              if [ "$tran" = usb ] || [ "$rm" = 1 ]; then echo "$name"; fi
+            done
+          }
+
+          disk_of() {     # any block device (partition, dm-mapper, ...) -> its whole disk
+            lsblk -srpno NAME,TYPE "$1" 2>/dev/null | awk '$2 == "disk" { print $1; exit }'
+          }
+
+          # Whole disk this OS booted from, if it can be worked out and is plugged in.
+          boot_disk() {
+            local dev="" arg id d
+            for arg in $(cat /proc/cmdline); do
+              case "$arg" in
+                archisosearchuuid=*) id=${arg#*=}; dev=$(blkid -U "$id" 2>/dev/null | head -n1) ;;
+                archisolabel=*)      id=${arg#*=}; dev=$(blkid -L "$id" 2>/dev/null | head -n1) ;;
+                archisodevice=*)     dev=${arg#*=}; [ -b "$dev" ] || dev="" ;;
+              esac
+              [ -n "$dev" ] && break
+            done
+            [ -n "$dev" ] || dev=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null)
+            [ -n "$dev" ] && [ -b "$dev" ] || return 1
+            d=$(disk_of "$dev"); [ -n "$d" ] || return 1
+            echo "$d"
+          }
+
+          has_iso() {     # does disk $1 hold a raw ISO image (iso9660 on it or its partitions)?
+            local disk=${1#/dev/} name type pk size fs label tran rm
+            rows | while IFS=$'\001' read -r name type pk size fs label tran rm; do
+              [ "$fs" = iso9660 ] || continue
+              if [ "${name#/dev/}" = "$disk" ] || [ "${pk#/dev/}" = "$disk" ]; then echo yes; break; fi
+            done | grep -q yes
+          }
+
+          find_save_part() {   # our own CPSAVE partition on disk $1
+            local disk=${1#/dev/} name type pk size fs label tran rm
+            rows | while IFS=$'\001' read -r name type pk size fs label tran rm; do
+              [ "$type" = part ] && [ "${pk#/dev/}" = "$disk" ] && [ "$label" = "$LABEL" ] && { echo "$name"; break; }
+            done
+          }
+
+          writable_parts() {   # "size name" for each normal writable partition on disk $1
+            local disk=${1#/dev/} name type pk size fs label tran rm
+            rows | while IFS=$'\001' read -r name type pk size fs label tran rm; do
+              [ "$type" = part ] && [ "${pk#/dev/}" = "$disk" ] || continue
+              case " $FS_OK " in *" $fs "*) ;; *) continue ;; esac
+              case "$SKIP_LABELS" in *" $label "*) continue ;; esac
+              echo "$size $name"
+            done
+          }
+
+          free_sectors() {
+            sfdisk -F "$1" 2>/dev/null | awk '$1 ~ /^[0-9]+$/ && NF >= 4 { if ($3 > m) m = $3 } END { print m + 0 }'
+          }
+
+          create_save_part() {
+            local disk="$1" before after new
+            before=$(lsblk -rpno NAME "$disk" | sort)
+            printf ',,L\n' | sfdisk --append --quiet "$disk" || return 1
+            partx -u "$disk" 2>/dev/null; partx -a "$disk" 2>/dev/null
+            udevadm settle --timeout=10 2>/dev/null
+            after=$(lsblk -rpno NAME "$disk" | sort)
+            new=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -n1)
+            [ -n "$new" ] && [ -b "$new" ] || return 2
+            mkfs.ext4 -q -F -L "$LABEL" "$new" || return 3
+            echo "$new"
+          }
+
+          mount_part() {   # $1 partition, $2 = ro|rw
+            mkdir -p "$MNT"
+            mount -o "$2,noatime,nosuid,nodev,noexec" "$1" "$MNT" 2>/dev/null
+          }
+          unmount_part() { sync; umount "$MNT" 2>/dev/null; rmdir "$MNT" 2>/dev/null; }
+
+          # ------------------------------------------------------------------- RESTORE
+          restore() {
+            local con=/dev/console disks=() d p lbl dir t best_t=0 best_p="" best_dir="" rc ver skipped=""
+            [ -w "$con" ] || con=/dev/null
+            udevadm settle --timeout=10 2>/dev/null
+            if d=$(boot_disk); then disks=("$d"); else mapfile -t disks < <(usb_disks); fi
+            [ "${#disks[@]}" -gt 0 ] || exit 0
+
+            # Look at every normal partition on those USBs; use the newest save found.
+            for d in "${disks[@]}"; do
+              while read -r _ p; do
+                [ -n "$p" ] || continue
+                mount_part "$p" ro || continue
+                lbl=$(lsblk -dno LABEL "$p" 2>/dev/null)
+                for dir in "$SAVE_SUBDIR" ""; do
+                  [ -z "$dir" ] && [ "$lbl" != "$LABEL" ] && continue
+                  if [ -f "$MNT/$dir/$ARCHIVE" ]; then
+                    t=$(stat -c %Y "$MNT/$dir/$ARCHIVE")
+                    if [ "$t" -gt "$best_t" ]; then best_t=$t; best_p=$p; best_dir=$dir; fi
+                  fi
+                done
+                unmount_part
+              done < <(writable_parts "$d")
+            done
+            [ -n "$best_p" ] || exit 0
+
+            { echo; echo "  FOUND DATA! TRANSFERRING OVER..."; } >"$con"
+            mount_part "$best_p" ro || { echo "  Could not read the saved data." >"$con"; exit 0; }
+            ver=$(cat "$MNT/$best_dir/$VERSION_FILE" 2>/dev/null)
+            mkdir -p "$HOME_DIR"
+            if [ -n "$ver" ] && [ "$ver" != "$ISO_VERSION" ]; then
+              # Newer ISO: keep its own desktop config, restore everything else.
+              tar --zstd -xpf "$MNT/$best_dir/$ARCHIVE" -C "$HOME_DIR" --numeric-owner \
+                  --exclude=./.config/hypr --exclude=./.config/waybar 2>>"$con"
+              rc=$?
+              skipped="  (saved on ISO $ver, this is $ISO_VERSION: kept the new desktop config)"
+            else
+              tar --zstd -xpf "$MNT/$best_dir/$ARCHIVE" -C "$HOME_DIR" --numeric-owner 2>>"$con"
+              rc=$?
+            fi
+            if [ "$rc" -eq 0 ]; then
+              echo "  DONE! Your saved data is back.$skipped" >"$con"
+            else
+              echo "  Some saved data could not be restored." >"$con"
+            fi
+            chown "$LIVE_USER": "$HOME_DIR" 2>/dev/null
+            unmount_part
+            exit 0
+          }
+
+          [ "${1:-}" = "--restore" ] && restore
+
+          # ---------------------------------------------------------------------- SAVE
+          ask_disk() {   # list the USB drives and let the user pick; empty answer = keep waiting
+            local list=() d i n
+            mapfile -t list < <(usb_disks)
+            [ "${#list[@]}" -gt 0 ] || return 1
+            >&2 say "I can't tell for sure which USB you booted from. USB drives I can see:"
+            i=1
+            for d in "${list[@]}"; do
+              >&2 printf '  %d) %s   %s   %s\n' "$i" "$d" "$(lsblk -dno SIZE "$d")" "$(lsblk -dno MODEL "$d")"
+              i=$((i + 1))
+            done
+            read -r -p "Which one is the USB you booted from? [1-${#list[@]}, Enter = keep waiting] " n
+            case "$n" in ''|*[!0-9]*) return 1 ;; esac
+            [ "$n" -ge 1 ] && [ "$n" -le "${#list[@]}" ] || return 1
+            echo "${list[$((n - 1))]}"
+          }
+
+          say "Please plug in the USB that you used to boot into this OS."
+          say "(waiting for the USB... press Ctrl+C to cancel)"
+          tries=0
+          until disk=$(boot_disk); do
+            sleep 2; tries=$((tries + 1))
+            if [ "$tries" -ge 3 ] && [ $(( (tries - 3) % 10 )) -eq 0 ]; then
+              if disk=$(ask_disk); then break; fi
+            fi
+          done
+          udevadm settle --timeout=10 2>/dev/null
+          say "USB found: $disk"
+
+          kind=folder
+          part=$(find_save_part "$disk")
+          if [ -n "$part" ]; then
+            kind=own
+          elif has_iso "$disk"; then
+            # Raw ISO image on the stick: the ISO part is read-only, so use the free space after it.
+            free=$(free_sectors "$disk")
+            [ "$free" -ge "$MIN_SECTORS" ] || die "there's no free space left on this USB (the ISO fills it). Use a bigger USB, or flash with Ventoy / Rufus ISO mode."
+            say "This USB has no save area yet."
+            read -r -p "Create one in the free space of the USB? [Y/N] " a
+            case "$a" in [Yy]*) ;; *) say "Cancelled."; exit 1 ;; esac
+            part=$(create_save_part "$disk") || die "could not create the save area (code $?). Unplug the USB, plug it in again and retry."
+            kind=own
+            say "Save area created."
+          else
+            # Rufus ISO mode, Ventoy, ...: use a folder on the stick's biggest normal partition.
+            part=$(writable_parts "$disk" | sort -rn | head -n1 | cut -d' ' -f2)
+            [ -n "$part" ] || die "no usable partition found on $disk."
+          fi
+
+          if pgrep -x brave >/dev/null 2>&1; then
+            say "Brave is still open. Close it first so your logins are saved safely."
+            read -r -p "Press Enter when it's closed (Ctrl+C to cancel)... " _
+          fi
+
+          mount_part "$part" rw || die "could not mount $part (is it Windows-hibernated or damaged?)."
+          trap 'unmount_part' EXIT
+          if [ "$kind" = own ]; then DEST="$MNT"; else DEST="$MNT/$SAVE_SUBDIR"; fi
+          mkdir -p "$DEST" || die "can't write to the USB."
+
+          if [ -f "$DEST/$ARCHIVE" ]; then
+            read -r -p "Found existing saved data in the usb. Are you sure you wanna overwrite them? [Y/N] " a
+            case "$a" in [Yy]*) ;; *) say "Cancelled. Nothing was changed."; exit 1 ;; esac
+          fi
+
+          say "Saving..."
+          LIST=$(mktemp)
+          cd "$HOME_DIR" || die "home folder $HOME_DIR not found"
+          PRUNE=( \( -path ./.cache -o -name 'Singleton*' -o -name GPUCache -o -name 'Code Cache' \
+                     -o -name ShaderCache -o -name GrShaderCache \) -prune -o )
+          skipped=$(find . -xdev "${PRUNE[@]}" -type f -size +10M -print0 | tr -cd '\0' | wc -c)
+          find . -xdev "${PRUNE[@]}" \( -type d -o -type l -o \( -type f ! -size +10M \) \) -print0 > "$LIST"
+
+          # Write the new archive next to the old one; only replace the old one when it is complete.
+          if tar --zstd --null --no-recursion -T "$LIST" -cpf "$DEST/$ARCHIVE.new" 2>/dev/null; then
+            :
+          else
+            rc=$?
+            # rc=1 only means "a file changed while reading"; anything higher is a real failure.
+            [ "$rc" -le 1 ] || { rm -f "$DEST/$ARCHIVE.new" "$LIST"; die "writing to the USB failed (full, or over the 4 GB FAT limit). Old data was kept."; }
+          fi
+          rm -f "$LIST"
+          printf '%s\n' "$ISO_VERSION" > "$DEST/$VERSION_FILE"
+          rm -f "$DEST/$ARCHIVE"
+          mv "$DEST/$ARCHIVE.new" "$DEST/$ARCHIVE"
+          sync
+          size=$(du -h "$DEST/$ARCHIVE" | cut -f1)
+          [ "$skipped" -gt 0 ] && say "Skipped $skipped file(s) bigger than 10 MB."
+          say "Saved $size."
+          unmount_part
+          trap - EXIT
+          say "Done! Please unplug your usb"
+          SAVEPROGRESS
+          sed -i "s/@LIVE_USER@/${LIVE_USER}/" "$AIROOT/usr/local/bin/save-progress"
+          bash -n "$AIROOT/usr/local/bin/save-progress"
+
+          # archiso does not keep file modes unless profiledef.sh lists them.
+          while IFS= read -r pd; do
+            sedx -o "$pd" '/^file_permissions=(/a\["/usr/local/bin/save-progress"]="0:0:755"'
+          done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
+
+          # At boot, before the desktop starts: if a USB holds saved data, copy it back.
+          cat > "$SYSD/restore-progress.service" <<'RESTOREUNIT'
+          [Unit]
+          Description=Restore saved progress from the boot USB
+          After=local-fs.target systemd-udevd.service
+          Before=greetd.service display-manager.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/save-progress --restore
+          TimeoutStartSec=120
+
+          [Install]
+          WantedBy=multi-user.target
+          RESTOREUNIT
+          ln -sf /etc/systemd/system/restore-progress.service \
+            "$SYSD/multi-user.target.wants/restore-progress.service"
+
       - name: Patch Boot Entries
         run: |
           set -euo pipefail
@@ -2398,7 +2670,7 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/ws-daemon.py usr/share/cachyos-hyprland/genwall.py usr/share/cachyos-hyprland/brave-launch.sh etc/skel/.local/share/applications/brave-browser.desktop etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences etc/brave/policies/recommended/cachyos-hyprland.json; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/ws-daemon.py usr/share/cachyos-hyprland/genwall.py etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
           [ -s cachyos/archiso/README.txt ] \
@@ -2442,14 +2714,15 @@ jobs:
           if grep -rqi 'anyrun\|nautilus' cachyos/archiso/airootfs/etc/skel cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
             echo "VERIFY FAIL: leftover anyrun/nautilus reference in the shipped config" >&2; fail=1
           fi
-          for j in "$R/BraveSoftware/Brave-Browser/Default/Preferences" cachyos/archiso/airootfs/etc/brave/policies/recommended/cachyos-hyprland.json; do
+          for j in "$R/BraveSoftware/Brave-Browser/Default/Preferences"; do
             python3 -m json.tool "$j" >/dev/null || { echo "VERIFY FAIL: $j is not valid JSON" >&2; fail=1; }
           done
           for py in "$R/hypr/ws-daemon.py" cachyos/archiso/airootfs/usr/share/cachyos-hyprland/genwall.py; do
             python3 -m py_compile "$py" || { echo "VERIFY FAIL: $py has a Python syntax error" >&2; fail=1; }
           done
-          sh -n cachyos/archiso/airootfs/usr/share/cachyos-hyprland/brave-launch.sh \
-            || { echo "VERIFY FAIL: brave-launch.sh syntax error" >&2; fail=1; }
+          if grep -rq 'brave-launch\|cachyos-wall' cachyos/archiso/airootfs/etc cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
+            echo "VERIFY FAIL: leftover Brave wallpaper/launcher reference" >&2; fail=1
+          fi
 
           for want in wifi.sh volume.sh kb-menu.sh clock-click.sh launcher.sh ws-go.sh 'power.sh bar'; do
             if ! grep -qF "$want" cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc; then
