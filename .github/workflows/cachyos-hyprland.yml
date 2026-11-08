@@ -249,7 +249,7 @@ jobs:
             matugen
             # inter-font: UI font (~15 MB). wqy-microhei: small CJK font so Chinese text shows (~5 MB)
             inter-font wqy-microhei
-            # rsync: update-with-usb copies a new version of the system over the running one
+            # rsync: updateos copies a new version of the system over the running one
             rsync
           )
 
@@ -1717,7 +1717,7 @@ jobs:
           │  Everything runs in RAM (toram). Changes are     │
           │  lost on reboot.                                 │
           │  Keep your files: run  save-progress             │
-          │  New version on a USB: update-with-usb           │
+          │  New version on a USB: updateos           │
           │                                                  │
           │  Keyboard: Super+F1 · Power menu: Super+X        │
           ╰──────────────────────────────────────────────────╯
@@ -1760,7 +1760,7 @@ jobs:
             encrypted, so keep the USB safe.
 
           Update without rebooting
-            Run `update-with-usb` in a terminal, then plug in a USB that has the new
+            Run `updateos` in a terminal, then plug in a USB that has the new
             version: a USB flashed with the new ISO, or a normal USB with the .iso file
             on it. The new system is copied over the running one (your files, Wi-Fi,
             timezone and wallpaper stay) and the bar and keybinds are refreshed. Open
@@ -2645,17 +2645,17 @@ jobs:
           ln -sf /etc/systemd/system/restore-progress.service \
             "$SYSD/multi-user.target.wants/restore-progress.service"
 
-      - name: Add update-with-usb (update the running OS from a USB, no reboot)
+      - name: Add updateos (update the running OS from a USB, no reboot)
         run: |
           set -euo pipefail
           AIROOT="cachyos/archiso/airootfs"
           LIVE_USER=$(grep -m1 -oP '^user = "\K[^"@]+' "$AIROOT/etc/greetd/config.toml" || true)
           LIVE_USER=${LIVE_USER:-liveuser}
-          echo "update-with-usb: live user is $LIVE_USER"
+          echo "updateos: live user is $LIVE_USER"
           mkdir -p "$AIROOT/usr/local/bin"
-          cat > "$AIROOT/usr/local/bin/update-with-usb" <<'UPDATEUSB'
+          cat > "$AIROOT/usr/local/bin/updateos" <<'UPDATEUSB'
           #!/bin/bash
-          # update-with-usb [--yes] [ISO-FILE | DEVICE | FOLDER]
+          # updateos [--yes] [ISO-FILE | DEVICE | FOLDER]
           #
           # Update this running OS to a newer version WITHOUT rebooting. Plug in a USB that has
           # the new version (flashed with the new ISO, or a normal USB with the .iso file on it).
@@ -2998,11 +2998,11 @@ jobs:
           [ "$KERNEL_CHANGED" = 1 ] && say "The new kernel only starts after a reboot (your saved files come back by themselves)."
           exit 0
           UPDATEUSB
-          sed -i "s/@LIVE_USER@/${LIVE_USER}/" "$AIROOT/usr/local/bin/update-with-usb"
-          bash -n "$AIROOT/usr/local/bin/update-with-usb"
+          sed -i "s/@LIVE_USER@/${LIVE_USER}/" "$AIROOT/usr/local/bin/updateos"
+          bash -n "$AIROOT/usr/local/bin/updateos"
           # archiso does not keep file modes unless profiledef.sh lists them.
           while IFS= read -r pd; do
-            sedx -o "$pd" '/^file_permissions=(/a\["/usr/local/bin/update-with-usb"]="0:0:755"'
+            sedx -o "$pd" '/^file_permissions=(/a\["/usr/local/bin/updateos"]="0:0:755"'
           done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
 
       - name: Patch Boot Entries
