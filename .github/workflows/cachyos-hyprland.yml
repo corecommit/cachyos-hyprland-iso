@@ -625,8 +625,8 @@ jobs:
 
           hl.config({
             general = {
-              gaps_in = 4,
-              gaps_out = 10,
+              gaps_in = 3,
+              gaps_out = 8,
               border_size = 2,
               col = {
                 active_border = "rgba(819299ee)",
@@ -635,7 +635,7 @@ jobs:
               layout = "dwindle",
             },
             decoration = {
-              rounding = 8,
+              rounding = 5,
               blur = { enabled = true, size = 5, passes = 2 },
               shadow = { enabled = false },
             },
