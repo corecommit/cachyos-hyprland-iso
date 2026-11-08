@@ -501,7 +501,7 @@ jobs:
               layout = "dwindle",
             },
             decoration = {
-              rounding = 12,
+              rounding = 8,
               blur = { enabled = true, size = 5, passes = 2 },
               shadow = { enabled = false },
             },
@@ -727,7 +727,7 @@ jobs:
           #battery, #clock, #custom-power, #custom-separator, #custom-separator2 {
             background: @bg;
             border: 1px solid @border_dim;
-            border-radius: 12px;
+            border-radius: 8px;
             padding: 4px 14px;
             margin: 2px 0;
             transition: all 150ms ease;
@@ -754,7 +754,7 @@ jobs:
             min-width: 18px;
             padding: 1px 10px;
             margin: 0 1px;
-            border-radius: 9px;
+            border-radius: 6px;
             font-weight: 600;
             color: @text_dim;
             transition: all 150ms ease;
@@ -802,7 +802,7 @@ jobs:
           #tray {
             background: @bg;
             border: 1px solid @border_dim;
-            border-radius: 12px;
+            border-radius: 8px;
             padding: 4px 10px;
             margin: 2px 0;
           }
@@ -868,7 +868,7 @@ jobs:
           window {
             margin: 0;
             border: 1px solid #2a2a2a;
-            border-radius: 16px;
+            border-radius: 10px;
             background-color: rgba(0, 0, 0, 0.94);
             font-family: "Inter", "WenQuanYi Micro Hei", "Noto Sans", "DejaVu Sans", sans-serif;
             font-size: 15px;
@@ -878,7 +878,7 @@ jobs:
             margin: 0 0 10px 0;
             padding: 10px 14px;
             border: 1px solid #2a2a2a;
-            border-radius: 12px;
+            border-radius: 8px;
             background-color: #0d0d0d;
             color: #f0f0f0;
             box-shadow: none;
@@ -887,7 +887,7 @@ jobs:
           #input:focus { border-color: #6b6b6b; }
           #scroll { margin: 0; }
           #inner-box { background-color: transparent; }
-          #entry { padding: 8px 12px; border-radius: 10px; color: #cfcfcf; }
+          #entry { padding: 8px 12px; border-radius: 6px; color: #cfcfcf; }
           #entry:selected { background-color: #1c1c1c; color: #ffffff; }
           #text { color: inherit; }
           #img { margin-right: 10px; }
@@ -1511,8 +1511,8 @@ jobs:
           }
           BRAVEPREFS
 
-                    # ---- Brave: new random wallpaper every time Brave is opened ----
-          mkdir -p "$AIROOT/usr/local/bin" "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
+          # ---- Brave: new random wallpaper every time Brave is opened ----
+          mkdir -p "$AIROOT/usr/local/bin"
           cat > "$AIROOT/usr/local/bin/brave" <<'BRAVEWRAP'
           #!/bin/sh
           # Regenerate Brave's custom wallpaper (new random picture, old one replaced),
@@ -1532,10 +1532,9 @@ jobs:
           exec /usr/bin/brave "$@"
           BRAVEWRAP
           sh -n "$AIROOT/usr/local/bin/brave"
-
           # archiso does not keep file modes unless profiledef.sh lists them.
           while IFS= read -r pd; do
-            sedx -o "$pd" '/^file_permissions=(/a\[\"/usr/local/bin/brave\"]=\"0:0:755\"'
+            sedx -o "$pd" '/^file_permissions=(/a\["/usr/local/bin/brave"]="0:0:755"'
           done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
 
           # ---- matugen (Super+P): colour scheme from a wallpaper ----
@@ -2153,7 +2152,7 @@ jobs:
           text-color=#e0e0e0
           border-color=#b4befe
           border-size=1
-          border-radius=10
+          border-radius=6
           padding=12
           margin=10
           anchor=bottom-right
@@ -2321,7 +2320,8 @@ jobs:
           #     in the free space after the ISO
           #   * Rufus "ISO mode" / Ventoy / any normal USB stick: saves into a folder
           #     (cachyos-hyprland-save) on the stick's biggest normal partition
-          # What is saved: the live user's home folder, except files over 10 MB and caches.
+          # What is saved: the live user's home folder, except files over 10 MB and caches (the
+          # skipped files are listed with their paths), plus saved Wi-Fi networks and the timezone.
           set -u
 
           LIVE_USER="@LIVE_USER@"
@@ -2329,6 +2329,9 @@ jobs:
           SAVE_SUBDIR="cachyos-hyprland-save"
           ARCHIVE="progress.tar.zst"
           VERSION_FILE="progress.version"
+          WIFI_ARCHIVE="wifi.tar.zst"                 # saved Wi-Fi networks (NetworkManager files)
+          TZ_FILE="timezone"                          # saved timezone name, e.g. Asia/Kolkata
+          NM_DIR="/etc/NetworkManager/system-connections"
           MNT="/run/progress-usb"
           MIN_SECTORS=131072                      # 64 MiB free space needed to create CPSAVE
           FS_OK="vfat exfat ntfs ext2 ext3 ext4 btrfs f2fs xfs"
@@ -2427,7 +2430,7 @@ jobs:
 
           # ------------------------------------------------------------------- RESTORE
           restore() {
-            local con=/dev/console disks=() d p lbl dir t best_t=0 best_p="" best_dir="" rc ver skipped=""
+            local con=/dev/console disks=() d p lbl dir t best_t=0 best_p="" best_dir="" rc ver skipped="" tz
             [ -w "$con" ] || con=/dev/null
             udevadm settle --timeout=10 2>/dev/null
             if d=$(boot_disk); then disks=("$d"); else mapfile -t disks < <(usb_disks); fi
@@ -2471,6 +2474,23 @@ jobs:
               echo "  Some saved data could not be restored." >"$con"
             fi
             chown "$LIVE_USER": "$HOME_DIR" 2>/dev/null
+            # Wi-Fi networks (NetworkManager keeps them as root-only files)
+            if [ -f "$MNT/$best_dir/$WIFI_ARCHIVE" ]; then
+              tar --zstd -xpf "$MNT/$best_dir/$WIFI_ARCHIVE" -C / --numeric-owner 2>>"$con" \
+                && chmod 600 "$NM_DIR"/*.nmconnection 2>/dev/null
+              nmcli connection reload >/dev/null 2>&1 || true
+            fi
+            # Timezone (and mark it as set, so the first-boot autodetect does not override it)
+            tz=$(cat "$MNT/$best_dir/$TZ_FILE" 2>/dev/null)
+            case "$tz" in
+              ''|/*|*..*) ;;
+              *) if [ -f "/usr/share/zoneinfo/$tz" ]; then
+                   ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime
+                   mkdir -p "$HOME_DIR/.config/hypr"
+                   : > "$HOME_DIR/.config/hypr/.tz-set-done"
+                   chown "$LIVE_USER": "$HOME_DIR/.config/hypr/.tz-set-done" 2>/dev/null
+                 fi ;;
+            esac
             unmount_part
             exit 0
           }
@@ -2546,24 +2566,63 @@ jobs:
           cd "$HOME_DIR" || die "home folder $HOME_DIR not found"
           PRUNE=( \( -path ./.cache -o -name 'Singleton*' -o -name GPUCache -o -name 'Code Cache' \
                      -o -name ShaderCache -o -name GrShaderCache \) -prune -o )
-          skipped=$(find . -xdev "${PRUNE[@]}" -type f -size +10M -print0 | tr -cd '\0' | wc -c)
+          SKIPLIST=$(mktemp)
+          find . -xdev "${PRUNE[@]}" -type f -size +10M -print0 > "$SKIPLIST"
+          skipped=$(tr -cd '\0' < "$SKIPLIST" | wc -c)
           find . -xdev "${PRUNE[@]}" \( -type d -o -type l -o \( -type f ! -size +10M \) \) -print0 > "$LIST"
 
-          # Write the new archive next to the old one; only replace the old one when it is complete.
-          if tar --zstd --null --no-recursion -T "$LIST" -cpf "$DEST/$ARCHIVE.new" 2>/dev/null; then
-            :
-          else
-            rc=$?
-            # rc=1 only means "a file changed while reading"; anything higher is a real failure.
-            [ "$rc" -le 1 ] || { rm -f "$DEST/$ARCHIVE.new" "$LIST"; die "writing to the USB failed (full, or over the 4 GB FAT limit). Old data was kept."; }
+          # Write the new archive next to the old one first. The old data is only deleted once the new
+          # one is complete, so a failed save never loses what was already there.
+          write_archive() { tar --zstd --null --no-recursion -T "$LIST" -cpf "$DEST/$ARCHIVE.new" 2>/dev/null; }
+          drop_old() { rm -f "$DEST/$ARCHIVE" "$DEST/$WIFI_ARCHIVE" "$DEST/$TZ_FILE" "$DEST/$VERSION_FILE"; }
+          write_archive; rc=$?
+          # rc=1 only means "a file changed while reading"; anything higher is a real failure.
+          if [ "$rc" -gt 1 ]; then
+            rm -f "$DEST/$ARCHIVE.new"
+            if [ -f "$DEST/$ARCHIVE" ]; then
+              say "Could not write the new save while keeping the old one (not enough room?)."
+              read -r -p "Delete the old saved data and write the new one in its place? [Y/N] " a
+              case "$a" in [Yy]*) ;; *) rm -f "$LIST" "$SKIPLIST"; die "Cancelled. Old data was kept." ;; esac
+              drop_old
+              write_archive; rc=$?
+            fi
+            [ "$rc" -le 1 ] || { rm -f "$DEST/$ARCHIVE.new" "$LIST" "$SKIPLIST"; die "writing to the USB failed (full, or over the 4 GB FAT limit)."; }
           fi
           rm -f "$LIST"
-          printf '%s\n' "$ISO_VERSION" > "$DEST/$VERSION_FILE"
-          rm -f "$DEST/$ARCHIVE"
+          # The new save is complete: delete everything left of the old one, then move the new one in.
+          drop_old
           mv "$DEST/$ARCHIVE.new" "$DEST/$ARCHIVE"
+          printf '%s\n' "$ISO_VERSION" > "$DEST/$VERSION_FILE"
+
+          # Wi-Fi networks, saved next to the archive (NetworkManager files, passwords included)
+          WIFI_LIST=$(mktemp)
+          ( cd / && grep -lsx 'type=wifi' "${NM_DIR#/}"/*.nmconnection ) > "$WIFI_LIST" 2>/dev/null
+          wifi_n=0
+          if [ -s "$WIFI_LIST" ] && tar --zstd -cpf "$DEST/$WIFI_ARCHIVE.new" -C / --numeric-owner -T "$WIFI_LIST" 2>/dev/null; then
+            mv -f "$DEST/$WIFI_ARCHIVE.new" "$DEST/$WIFI_ARCHIVE"
+            wifi_n=$(wc -l < "$WIFI_LIST")
+          else
+            rm -f "$DEST/$WIFI_ARCHIVE.new"
+          fi
+          rm -f "$WIFI_LIST"
+          # Timezone (UTC means "never set", so it is not saved)
+          tz=$(readlink -f /etc/localtime 2>/dev/null | sed -n 's|.*/zoneinfo/||p')
+          if [ -n "$tz" ] && [ "$tz" != UTC ] && [ -f "/usr/share/zoneinfo/$tz" ]; then
+            printf '%s\n' "$tz" > "$DEST/$TZ_FILE"
+          else
+            tz=""
+          fi
           sync
           size=$(du -h "$DEST/$ARCHIVE" | cut -f1)
-          [ "$skipped" -gt 0 ] && say "Skipped $skipped file(s) bigger than 10 MB."
+          if [ "$skipped" -gt 0 ]; then
+            say "Skipped $skipped file(s) bigger than 10 MB:"
+            while IFS= read -r -d '' f; do
+              printf '  %s  (%s)\n' "$HOME_DIR/${f#./}" "$(du -h --apparent-size -- "$f" | cut -f1)"
+            done < "$SKIPLIST"
+          fi
+          rm -f "$SKIPLIST"
+          [ "$wifi_n" -gt 0 ] && say "Saved $wifi_n Wi-Fi network(s)."
+          [ -n "$tz" ] && say "Saved timezone: $tz."
           say "Saved $size."
           unmount_part
           trap - EXIT
@@ -2582,7 +2641,7 @@ jobs:
           [Unit]
           Description=Restore saved progress from the boot USB
           After=local-fs.target systemd-udevd.service
-          Before=greetd.service display-manager.service
+          Before=greetd.service display-manager.service NetworkManager.service
 
           [Service]
           Type=oneshot

@@ -21,6 +21,7 @@ Built automatically from the upstream CachyOS-Live-ISO by a GitHub Actions workf
 [Download](https://github.com/corecommit/cachyos-hyprland-iso/releases/latest) |
 [How it works](#how-it-works) |
 [Shortcuts](#keyboard-shortcuts) |
+[Saving your progress](#saving-your-progress) |
 [Warnings](#warnings-read-before-booting) |
 [Build your own](#build-your-own)
 
@@ -35,14 +36,16 @@ The official CachyOS live ISO ships KDE Plasma. This project takes that ISO prof
 | Component | What it is |
 |---|---|
 | Compositor | Hyprland, started by greetd with autologin |
-| Top bar | Waybar: clock, temperature, RAM, workspaces, window title, tray, Wi-Fi, volume, battery, power menu |
+| Top bar | Waybar: app launcher button, workspaces 1-3, window title, tray, Wi-Fi, volume, brightness, battery, CPU, RAM, keyboard layout, clock, power menu |
 | Terminal | kitty with fish and fastfetch |
 | Launcher | wofi |
 | File manager | Thunar |
-| Browser | Firefox |
+| Browser | Brave, with a new random wallpaper on its new tab page every time it is opened |
+| Wallpaper | A new random dark wallpaper at every login (`Super + Shift + W` for another). `Super + P` picks a wallpaper and recolours the bar and terminal |
 | Notifications | mako |
 | Lock screen / idle | hyprlock, hypridle |
 | Kernel | linux-cachyos (the LTS kernels are removed) |
+| Saving | `save-progress` keeps your files, Wi-Fi networks and timezone on the USB stick between boots |
 | Installer | The CachyOS installer is kept so you can install from the live session |
 
 Nothing here is a fork of CachyOS. The workflow downloads the upstream profile on every build and patches it, so upstream updates flow in automatically.
@@ -54,9 +57,9 @@ Nothing here is a fork of CachyOS. The workflow downloads the upstream profile o
 **Memory**
 
 - **4 GB of RAM is the practical minimum.** The live session keeps all changes (installed packages, downloads, settings) in RAM. A browser plus a few apps can fill it quickly.
-- **8 GB or more is recommended**, especially if you plan to use Firefox, install packages in the live session, or run the installer while doing other things.
-- If the system starts freezing or killing programs, you are almost certainly out of memory. Close Firefox first.
-- Everything done in the live session is lost on reboot. Nothing is saved to the USB stick.
+- **8 GB or more is recommended**, especially if you plan to use Brave, install packages in the live session, or run the installer while doing other things.
+- If the system starts freezing or killing programs, you are almost certainly out of memory. Close Brave first.
+- Everything done in the live session is lost on reboot unless you run `save-progress` (see [Saving your progress](#saving-your-progress)). Installed packages and files over 10 MB are never saved.
 
 **Storage and boot speed**
 
@@ -100,7 +103,7 @@ Nothing here is a fork of CachyOS. The workflow downloads the upstream profile o
 
 ### Connecting to Wi-Fi
 
-Click the network item in the top bar, which opens `nmtui`. Or from a terminal:
+Click the network item in the top bar, which opens `nmtui`. Or from a terminal (run `save-progress` afterwards to keep the network for next time):
 
 ```bash
 nmcli device wifi connect "SSID" password "PASSWORD"
@@ -108,33 +111,65 @@ nmcli device wifi connect "SSID" password "PASSWORD"
 
 ## Keyboard shortcuts
 
-`Super` is the Windows key. Press `Super + F1` at any time to open the full config in a terminal.
+`Super` is the Windows key. Press `Super + F1` at any time to open the cheatsheet.
 
 | Keys | Action |
 |---|---|
 | `Super + Enter` | Open terminal (kitty) |
 | `Super + Space` or `Super + D` | Open launcher (wofi) |
+| `Super + Shift + Space` | Command palette (apps, audio, display, Wi-Fi) |
+| `Super + B` | Browser (Brave) |
+| `Super + E` | File manager (Thunar) |
+| `Super + P` | Pick a wallpaper and recolour the bar and terminal |
+| `Super + Shift + W` | New random wallpaper |
 | `Super + Q` | Close window |
 | `Super + F` | Fullscreen on or off |
 | `Super + V` | Floating on or off |
-| `Super + E` | File manager (Thunar) |
-| `Super + B` | Firefox |
-| `Super + L` | Lock screen |
 | `Super + Arrow keys` | Move focus |
 | `Super + Shift + Arrow keys` | Move window |
-| `Super + Ctrl + Arrow keys` | Resize window (hold to repeat) |
-| `Super + 1-9` | Go to workspace |
-| `Super + Shift + 1-9` | Send window to workspace |
-| `Super + .` and `Super + ,` | Next or previous workspace |
-| `Super + Scroll` | Next or previous workspace |
 | `Super + Left-drag` | Move window with the mouse |
 | `Super + Right-drag` | Resize window with the mouse |
-| `Super + Y` | Pin a floating window to all workspaces |
-| `Print` | Select a region and copy a screenshot to the clipboard |
+| `Super + 1-3` | Go to workspace |
+| `Super + Shift + 1-3` | Send window to workspace |
+| `Super + .` and `Super + ,` | Next or previous workspace |
+| `Super + Scroll` | Next or previous workspace |
+| `Super + L` | Lock screen |
+| `Super + X` | Power menu |
+| `Super + Alt + Space` | Switch keyboard layout (us, de, fr, es) |
+| `Print` or `Super + Shift + S` | Select a region: copy to clipboard and save to `~/screenshots` |
+| `Super + Print` | Full-screen screenshot to `~/screenshots` |
 | `Super + Shift + R` | Reload Hyprland config |
 | `Super + Shift + E` | Exit Hyprland |
 
-Volume and brightness keys work as normal media keys.
+Volume and brightness keys work as normal media keys. Double-click the clock in the bar to set the timezone (type a zone like `Asia/Kolkata` or an offset like `5:30`).
+
+## Saving your progress
+
+The live session runs from RAM, so by default everything is gone after a reboot. `save-progress` writes your files onto the USB stick you booted from and brings them back at the next boot.
+
+```bash
+save-progress
+```
+
+1. Plug in the USB you booted from. The command waits for it, and asks you to pick it if it cannot tell which one it is.
+2. If the stick was written as a raw image (`dd`, balenaEtcher, Rufus "DD Image"), it offers to create a small `CPSAVE` partition in the free space after the ISO (at least 64 MiB free is needed). If the stick was made with Ventoy or Rufus "ISO mode", it saves into a `cachyos-hyprland-save` folder on the stick's biggest normal partition instead.
+3. Close Brave when asked, so your logins are saved safely.
+
+**What is saved**
+
+- Your home folder, except caches and any file bigger than 10 MB. Every skipped file is listed at the end with its full path and size.
+- Your saved Wi-Fi networks.
+- Your timezone.
+
+**Overwriting.** If the stick already holds a save, you are asked before it is replaced. The new save is written first, and only when it is complete is the old data (files, Wi-Fi, timezone and version) deleted and replaced, so a failed save never destroys the old one. If there is not enough room for both, you are asked whether to delete the old save first and then write the new one.
+
+**Restoring.** At the next boot with the same stick, a message says `FOUND DATA! TRANSFERRING OVER...` and everything is put back before the desktop starts. If the save came from an older ISO version, your saved files are restored but the new ISO's Hyprland and Waybar config is kept.
+
+Things to know:
+
+- Saved Wi-Fi passwords are stored as NetworkManager keeps them, unencrypted. Anyone who can read the stick can read them.
+- Installed packages are not saved.
+- On a FAT-formatted stick a single save cannot be bigger than 4 GB.
 
 ## How it works
 
@@ -149,14 +184,15 @@ Clone upstream  ->  Patch profile  ->  Verify  ->  Build  ->  Check  ->  Publish
 3. **Patch the profile.** Each patch is its own step and fails loudly if upstream changed and a change did nothing (a small `sedx` helper enforces this).
    - Package list: add Hyprland, Waybar, kitty and friends; remove Plasma, KDE apps, LTS kernels, guest tools, network tools and other things a live session does not need.
    - Display manager: swap Plasma's login manager for greetd, with an autologin straight into Hyprland.
-   - Airootfs: write the Hyprland, Waybar, kitty and fish configs into `/etc/skel`, generate a wallpaper, and remove Plasma-specific config files.
+   - Airootfs: write the Hyprland, Waybar, kitty and fish configs into `/etc/skel`, generate a wallpaper, and remove Plasma-specific config files. A small `brave` wrapper makes a new wallpaper for Brave each time it is started.
+   - Saving: install `save-progress` and a boot service that restores your saved data before the desktop starts.
    - Boot robustness: remove dangling links to removed services, raise timeouts for slow or emulated machines, and make sure NetworkManager is enabled.
    - Boot entries: point GRUB, systemd-boot and syslinux at `linux-cachyos`, and remove the LTS entries.
    - Session launcher: a small script copies the default config into the home folder if it is missing, so the desktop always starts with these settings.
 4. **Verify.** Checks that Plasma and the LTS kernel are really gone, that required config files exist, and that no boot entry still points at a removed kernel.
 5. **Build.** Runs the upstream `buildiso.sh` as the builder user and keeps a full log, which is uploaded as an artifact if the build fails.
 6. **Check.** Confirms every kernel named in a boot config exists in the final ISO, and checks the ISO size against the 2 GiB GitHub release limit.
-7. **Publish.** Uploads the ISO as a workflow artifact (kept 30 days) and, for tags starting with `cachyos-v`, attaches it to a GitHub Release.
+7. **Publish.** Uploads the ISO as a workflow artifact (kept 30 days) and, for tags starting with `cachyos-v`, attaches it to a GitHub Release. If `CHANGELOG.md` has a section for the version (a `## 1.1.3` heading, for example), it becomes the release description.
 
 ### Boot test workflow
 
@@ -188,6 +224,7 @@ Edit the arrays and heredocs in the **Patch Package List** and **Patch airootfs*
 - Add or remove packages in the `ADD` and `REMOVE` arrays.
 - Change the desktop look in the Waybar `config.jsonc` and `style.css` blocks.
 - Change shortcuts in the Hyprland config block.
+- Change corner roundness: `rounding` in the Hyprland block, and the `border-radius` values in the Waybar, wofi and mako blocks.
 
 ## Troubleshooting
 
@@ -195,8 +232,10 @@ Edit the arrays and heredocs in the **Patch Package List** and **Patch airootfs*
 |---|---|
 | Screen is black after the boot messages | Wait a couple of minutes on slow media. In a VM, enable virtio-gpu with 3D |
 | Stock Hyprland welcome screen, no top bar | The config was not loaded. Run `cp -rn /etc/skel/. ~/` and `rm -f ~/.config/hypr/hyprland.lua`, then log out and back in |
-| System freezes or apps get killed | Out of RAM. Close Firefox and other heavy apps |
+| System freezes or apps get killed | Out of RAM. Close Brave and other heavy apps |
 | No Wi-Fi networks listed | Try `nmcli device wifi rescan`. Some chipsets need firmware that is not in the image |
+| Saved data did not come back | Boot from the same USB you saved to. Check that `save-progress` finished with `Saved ...` and `Done!`. On Ventoy sticks the `cachyos-hyprland-save` folder must still be on the stick |
+| Brave wallpaper did not change | The new wallpaper is made when Brave starts, and only if Brave was not already running. Close it fully and start it with `Super + B` |
 | Dropped to GRUB with errors | Re-download the ISO and verify the checksum. A partial download is the most common cause |
 
 ## Credits

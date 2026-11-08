@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.3
+
+### Added
+- Brave gets a new random wallpaper on its new tab page every time it is opened.
+- `save-progress` now also saves your saved Wi-Fi networks and your timezone, and restores them at boot.
+
+### Changed
+- `save-progress` now lists every file it skips for being over 10 MB, with its full path and size, instead of only a count.
+- When `save-progress` overwrites a save, it deletes all the old saved data and writes the new one in its place. The old save is kept until the new one is complete, and if there isn't room for both you're asked whether to delete it first.
+- Corners are less rounded across the desktop: windows, the bar, the app launcher and notifications.
+- README updated: Brave, the current shortcuts, and a new "Saving your progress" section.
+
 ## 1.1.2
 
 ### Added
