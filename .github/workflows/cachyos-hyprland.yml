@@ -249,6 +249,8 @@ jobs:
             matugen
             # inter-font: UI font (~15 MB). wqy-microhei: small CJK font so Chinese text shows (~5 MB)
             inter-font wqy-microhei
+            # rsync: update-with-usb copies a new version of the system over the running one
+            rsync
           )
 
           REMOVE=(
@@ -561,7 +563,7 @@ jobs:
               match = { class = "^(org\\.pulseaudio\\.pavucontrol|pavucontrol)$" },
               float = true,
               size = { 440, 500 },
-              move = { "(cursor_x-(window_w*0.5))", "54" },
+              move = { "(cursor_x-(window_w*0.5))", "34" },
             })
           end
 
@@ -598,7 +600,7 @@ jobs:
           hl.bind(mod .. " + SHIFT + up",    hl.dsp.window.move({ direction = "up" }))
           hl.bind(mod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "down" }))
 
-          -- Workspaces: only 1-3 exist. Next/previous with . and , or Super + scroll (wraps 3 -> 1)
+          -- Workspaces: only 1-4 exist. Next/previous with . and , or Super + scroll (wraps 4 -> 1)
           hl.bind(mod .. " + period",     hl.dsp.exec_cmd("sh ~/.config/hypr/ws-go.sh next"))
           hl.bind(mod .. " + comma",      hl.dsp.exec_cmd("sh ~/.config/hypr/ws-go.sh prev"))
           hl.bind(mod .. " + mouse_down", hl.dsp.exec_cmd("sh ~/.config/hypr/ws-go.sh next"))
@@ -616,8 +618,8 @@ jobs:
           hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd("brightnessctl set 5%+"), { locked = true, repeating = true })
           hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl set 5%-"), { locked = true, repeating = true })
 
-          -- Workspaces 1-3
-          for i = 1, 3 do
+          -- Workspaces 1-4
+          for i = 1, 4 do
             hl.bind(mod .. " + " .. i,           hl.dsp.focus({ workspace = i }))
             hl.bind(mod .. " + SHIFT + " .. i,   hl.dsp.window.move({ workspace = i }))
           end
@@ -627,68 +629,68 @@ jobs:
           {
             "layer": "top",
             "position": "top",
-            "height": 38,
-            "margin-top": 8,
-            "margin-left": 12,
-            "margin-right": 12,
-            "spacing": 6,
-            "modules-left": ["custom/launcher", "custom/separator", "group/workspaces", "hyprland/window"],
-            "modules-right": ["idle_inhibitor", "tray", "network", "pulseaudio", "backlight",
-                              "battery", "cpu", "memory", "hyprland/language",
-                              "custom/separator2", "clock", "custom/power"],
-            "custom/launcher": { "format": " ", "tooltip": false, "on-click": "sh ~/.config/hypr/launcher.sh", "on-click-right": "sh ~/.config/hypr/palette.sh" },
-            "custom/separator": { "format": "", "tooltip": false },
-            "custom/separator2": { "format": "", "tooltip": false },
-            "group/workspaces": { "orientation": "inherit", "modules": ["custom/ws1", "custom/ws2", "custom/ws3"] },
+            "height": 30,
+            "spacing": 4,
+            "modules-left": ["group/workspaces", "hyprland/window"],
+            "modules-right": ["tray", "network", "hyprland/language", "backlight", "battery",
+                              "disk", "pulseaudio", "custom/mem", "cpu", "clock"],
+            "group/workspaces": { "orientation": "inherit", "modules": ["custom/ws1", "custom/ws2", "custom/ws3", "custom/ws4"] },
             "custom/ws1": { "exec": "sh ~/.config/hypr/ws-state.sh 1", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 1" },
             "custom/ws2": { "exec": "sh ~/.config/hypr/ws-state.sh 2", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 2" },
             "custom/ws3": { "exec": "sh ~/.config/hypr/ws-state.sh 3", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 3" },
-            "idle_inhibitor": {
-              "format": "{icon}",
-              "format-icons": { "activated": "\uf186", "deactivated": "\uf185" },
-              "tooltip": false
+            "custom/ws4": { "exec": "sh ~/.config/hypr/ws-state.sh 4", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 4" },
+            "hyprland/window": { "format": "{title}", "max-length": 45, "rewrite": { "": " " } },
+            "tray": { "spacing": 10, "icon-size": 16 },
+            "network": {
+              "format-wifi": "\uf1eb",
+              "format-ethernet": "\uf6ff",
+              "format-disconnected": "\uf071",
+              "tooltip-format-wifi": "{essid}\n{ifname}  {ipaddr}\n{signalStrength}%  {frequency} GHz",
+              "tooltip-format-ethernet": "{ifname}  {ipaddr}",
+              "tooltip-format-disconnected": "Not connected",
+              "on-click": "sh ~/.config/hypr/wifi.sh"
+            },
+            "hyprland/language": {
+              "format": "{short}",
+              "tooltip": false,
+              "on-click": "sh ~/.config/hypr/kb-menu.sh"
             },
             "backlight": {
-              "format": "\uf185  {percent}%",
+              "format": "<span color='#b4befe'>\uf185</span> {percent}%",
               "tooltip": false,
               "on-scroll-up": "brightnessctl set 5%+",
               "on-scroll-down": "brightnessctl set 5%-"
             },
-            "cpu": { "format": "\uf0e4  {usage}%", "interval": 3 },
-            "memory": { "format": "\uf2db  {percentage}%", "interval": 5 },
-            "hyprland/language": {
-              "format": "{}",
-              "tooltip": false,
-              "on-click": "sh ~/.config/hypr/kb-menu.sh"
+            "battery": {
+              "format": "<span color='#b4befe'>{icon}</span> {capacity}%",
+              "format-charging": "<span color='#b4befe'>\uf0e7</span> {capacity}%",
+              "format-full": "<span color='#b4befe'>\uf240</span> full",
+              "format-icons": ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"],
+              "states": { "warning": 25, "critical": 10 },
+              "interval": 30
             },
-            "hyprland/window": { "format": "{title}", "max-length": 45, "rewrite": { "": " " } },
-            "clock": { "format": "{:%H:%M}", "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt>{calendar}</tt>", "on-click": "sh ~/.config/hypr/clock-click.sh" },
-            "tray": { "spacing": 10, "icon-size": 16 },
-            "network": {
-              "format-wifi": "\uf1eb  {essid}",
-              "format-ethernet": "\uf0ac  {ifname}",
-              "format-disconnected": "\uf071  offline",
-              "tooltip-format-wifi": "{ifname}  {ipaddr}\n{signalStrength}%  {frequency} GHz",
-              "tooltip-format-ethernet": "{ifname}  {ipaddr}",
-              "on-click": "sh ~/.config/hypr/wifi.sh"
+            "disk": {
+              "format": "<span color='#b4befe'>\uf0a0</span> {percentage_used}%",
+              "path": "/",
+              "interval": 30,
+              "tooltip-format": "{used} used of {total} on /"
             },
             "pulseaudio": {
-              "format": "{icon}  {volume}%",
-              "format-muted": "\uf6a9  muted",
+              "format": "<span color='#b4befe'>{icon}</span> {volume}%",
+              "format-muted": "<span color='#b4befe'>\uf6a9</span> muted",
               "format-icons": { "default": ["\uf026", "\uf027", "\uf028"] },
               "on-click": "sh ~/.config/hypr/volume.sh",
               "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
               "scroll-step": 2
             },
-            "battery": {
-              "format": "{icon}  {capacity}%",
-              "format-charging": "\uf0e7  {capacity}%",
-              "format-full": "\uf240  full",
-              "format-icons": ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"],
-              "states": { "warning": 25, "critical": 10 },
-              "interval": 30
+            "custom/mem": {
+              "exec": "sh ~/.config/hypr/mem.sh",
+              "format": "<span color='#b4befe'>\uf538</span> {}",
+              "interval": 5,
+              "tooltip": false
             },
-            "custom/power": { "format": "\uf011", "tooltip": false, "on-click": "sh ~/.config/hypr/power.sh bar" }
+            "cpu": { "format": "<span color='#b4befe'>\uf2db</span> {usage}%", "interval": 3, "tooltip": false },
+            "clock": { "format": "{:%H:%M}", "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt>{calendar}</tt>", "on-click": "sh ~/.config/hypr/clock-click.sh" }
           }
           WBCONF
 
@@ -696,19 +698,17 @@ jobs:
           /* colors.css holds the base colours; Super+P (matugen) rewrites it. */
           @import "colors.css";
 
-          @define-color bg alpha(@surface, 0.82);
-          @define-color bg_hover alpha(@surface_container_high, 0.92);
-          @define-color border_dim rgba(255, 255, 255, 0.06);
-          @define-color border_bright rgba(255, 255, 255, 0.12);
+          @define-color bg alpha(@surface_container_high, 0.97);
+          @define-color border_dim rgba(255, 255, 255, 0.10);
           @define-color text @on_surface;
           @define-color text_dim @on_surface_variant;
           @define-color accent @primary;
-          @define-color accent_dim alpha(@primary, 0.15);
-          @define-color warn @tertiary;
+          @define-color pink @tertiary;
+          @define-color warn #f9e2af;
           @define-color crit @error;
 
           * {
-            font-family: "Inter", "WenQuanYi Micro Hei", "Font Awesome 6 Free", sans-serif;
+            font-family: monospace, "Font Awesome 6 Free", "WenQuanYi Micro Hei", sans-serif;
             font-size: 13px;
             font-weight: 500;
             border: none;
@@ -716,110 +716,74 @@ jobs:
             min-height: 0;
           }
 
+          /* Flat, full-width bar: no gaps, no pills. */
           window#waybar {
-            background: transparent;
-            color: @text;
-          }
-
-          /* ── Module pills ── */
-          #custom-launcher, #workspaces, #window, #tray, #network, #pulseaudio,
-          #idle_inhibitor, #backlight, #cpu, #memory, #language,
-          #battery, #clock, #custom-power, #custom-separator, #custom-separator2 {
             background: @bg;
-            border: 1px solid @border_dim;
-            border-radius: 8px;
-            padding: 4px 14px;
-            margin: 2px 0;
-            transition: all 150ms ease;
+            color: @text;
+            border-top: 1px solid @border_dim;
+            border-bottom: 1px solid @border_dim;
           }
 
-          #custom-launcher:hover, #window:hover, #network:hover,
-          #pulseaudio:hover, #battery:hover, #clock:hover, #custom-power:hover {
-            background: @bg_hover;
-            border-color: @border_bright;
+          #tray, #network, #language, #backlight, #battery, #disk,
+          #pulseaudio, #custom-mem, #cpu, #clock, #window {
+            background: transparent;
+            padding: 0 8px;
+            margin: 0;
           }
 
-          /* ── Launcher icon ── */
-          #custom-launcher {
-            font-size: 15px;
-            padding: 4px 16px;
-            color: @accent;
+          #network:hover, #language:hover, #pulseaudio:hover, #clock:hover {
+            background: alpha(@text, 0.08);
           }
 
-          /* ── Workspaces 1-3 ── */
+          /* ── Workspaces 1-4: only the ones in use are shown ── */
           #workspaces {
-            padding: 3px 4px;
+            margin: 0 4px 0 2px;
+            padding: 0;
           }
-          #custom-ws1, #custom-ws2, #custom-ws3 {
+          #custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4 {
             min-width: 18px;
-            padding: 1px 10px;
-            margin: 0 1px;
-            border-radius: 6px;
-            font-weight: 600;
+            padding: 0 8px;
+            margin: 3px 2px;
+            border-bottom: 2px solid transparent;
+            border-radius: 3px;
             color: @text_dim;
-            transition: all 150ms ease;
+            background: transparent;
           }
-          #custom-ws1.occupied, #custom-ws2.occupied, #custom-ws3.occupied {
+          #custom-ws1.occupied, #custom-ws2.occupied, #custom-ws3.occupied, #custom-ws4.occupied {
             color: @text;
           }
-          #custom-ws1:hover, #custom-ws2:hover, #custom-ws3:hover {
-            background: @accent_dim;
+          #custom-ws1.active, #custom-ws2.active, #custom-ws3.active, #custom-ws4.active {
+            color: @text;
+            background: alpha(@text, 0.10);
+            border-bottom: 2px solid @accent;
           }
-          #custom-ws1.active, #custom-ws2.active, #custom-ws3.active {
-            background: @accent;
-            color: @on_primary;
-          }
-
-          /* ── Invisible separators ── */
-          #custom-separator, #custom-separator2 {
-            background: transparent;
-            border: none;
-            padding: 0 1px;
+          /* Empty workspaces take no space. Delete this rule to show all four buttons. */
+          #custom-ws1.empty, #custom-ws2.empty, #custom-ws3.empty, #custom-ws4.empty {
             min-width: 0;
+            padding: 0;
+            margin: 0;
+            border: none;
             font-size: 0;
+            background: transparent;
           }
 
-          /* ── Window title ── */
+          /* ── Window title and clock ── */
           #window {
+            color: @pink;
             font-weight: 400;
-            color: @text_dim;
-            padding: 4px 16px;
           }
           window#waybar.empty #window {
-            background: transparent;
-            border-color: transparent;
             padding: 0;
-            min-width: 0;
           }
-
-          /* ── Clock ── */
           #clock {
-            font-weight: 600;
-            letter-spacing: 0.5px;
-          }
-
-          /* ── Tray ── */
-          #tray {
-            background: @bg;
-            border: 1px solid @border_dim;
-            border-radius: 8px;
-            padding: 4px 10px;
-            margin: 2px 0;
+            color: @pink;
+            font-weight: 700;
           }
 
           /* ── Status colors ── */
           #battery.warning { color: @warn; }
           #battery.critical { color: @crit; }
           #network.disconnected { color: @warn; }
-          #custom-power {
-            color: @crit;
-            font-size: 14px;
-            padding: 4px 12px;
-          }
-          #custom-power:hover {
-            background: rgba(243, 139, 168, 0.15);
-            border-color: rgba(243, 139, 168, 0.3);
-          }
           WBCSS
 
           cat > "$CONF/hypr/power.sh" <<'POWERSH'
@@ -828,7 +792,7 @@ jobs:
           # which drops it down under the button. Also in the palette ("System: Power menu").
           # Same wofi path as the palette (default style, no custom markup/stylesheet).
           if [ "${1:-}" = bar ]; then
-            set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 54)
+            set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 34)
             place="--location top_left --xoffset $1 --yoffset $2"
           else
             place=""
@@ -945,7 +909,7 @@ jobs:
 
           cat > "$CONF/hypr/palette.sh" <<'WBPALETTE'
           #!/bin/sh
-          # Command palette (Super+Shift+Space, or right-click the launcher icon in the bar).
+          # Command palette (Super+Shift+Space).
           # Type to filter (fuzzy), Enter to run. Recently used entries float to the top.
           # To add a command: add a line to the list and a matching case below.
           HIST="${XDG_CACHE_HOME:-$HOME/.cache}/palette-history"
@@ -1138,12 +1102,12 @@ jobs:
           # Base colours for the bar and kitty; Super+P (matugen) overwrites these files.
           cat > "$CONF/waybar/colors.css" <<'WBCOLORS'
           @define-color surface #0a0a12;
-          @define-color surface_container_high #181826;
+          @define-color surface_container_high #23232b;
           @define-color on_surface #e0e0e0;
           @define-color on_surface_variant #787878;
           @define-color primary #b4befe;
           @define-color on_primary #0a0a12;
-          @define-color tertiary #f9e2af;
+          @define-color tertiary #f5a6d7;
           @define-color error #f38ba8;
           WBCOLORS
           cat > "$CONF/kitty/colors.conf" <<'KITTYCOLORS'
@@ -1175,7 +1139,7 @@ jobs:
           # popup-pos.sh WIDTH [TOP] -> prints "X Y": where a popup of WIDTH px must go so it sits
           # centred under the mouse pointer (the bar button that was just clicked), TOP px from the
           # top of the monitor and kept on screen. Falls back to "100 TOP".
-          python3 - "${1:-300}" "${2:-54}" <<'PY' 2>/dev/null || echo "100 ${2:-54}"
+          python3 - "${1:-300}" "${2:-34}" <<'PY' 2>/dev/null || echo "100 ${2:-34}"
           import json, subprocess, sys
           w, top = int(sys.argv[1]), int(sys.argv[2])
           def hc(cmd):
@@ -1201,7 +1165,7 @@ jobs:
           #!/bin/sh
           # Language dropdown (click the layout in the bar). The order must match kb_layout
           # ("us,de,fr,es") in hyprland.lua. Super+Alt+Space still cycles (kb-switch.sh).
-          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 54)
+          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 34)
           choice=$(printf '%s\n' "us  English (US)" "de  Deutsch" "fr  Français" "es  Español" \
             | wofi --dmenu --hide-search --insensitive --cache-file /dev/null --prompt Language \
                 --width 220 --height 200 --location top_left --xoffset "$1" --yoffset "$2")
@@ -1240,7 +1204,7 @@ jobs:
           # map to the zone that normally has that offset.
           notify() { command -v notify-send >/dev/null 2>&1 && notify-send -t 4000 "$@"; return 0; }
 
-          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 320 54)
+          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 320 34)
           raw=$(printf '' | wofi --dmenu --exec-search --cache-file /dev/null --prompt "UTC offset, e.g. 5:30" \
             --width 320 --height 100 --location top_left --xoffset "$1" --yoffset "$2") || exit 0
           raw=$(printf '%s' "$raw" | tr -d '[:space:]')
@@ -1336,7 +1300,7 @@ jobs:
 
           cat > "$CONF/hypr/launcher.sh" <<'LAUNCHERSH'
           #!/bin/sh
-          # Super+Space, Super+D and the bar's square button: the app launcher (wofi drun).
+          # Super+Space and Super+D: the app launcher (wofi drun).
           # Pressing it again while it is open closes it.
           if pkill -x wofi; then exit 0; fi
           exec wofi --show drun --prompt "Search apps"
@@ -1356,7 +1320,18 @@ jobs:
           exit 0
           WALLSH
 
-          # ---- Workspace buttons 1-2-3 (bar) ----
+          cat > "$CONF/hypr/mem.sh" <<'MEMSH'
+          #!/bin/sh
+          # Bar memory text: "963 MiB / 30.96 GiB" (used / total; used = total - available).
+          awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 }
+            END {
+              u = t - a
+              if (u < 1048576) us = sprintf("%d MiB", u / 1024); else us = sprintf("%.2f GiB", u / 1048576)
+              printf "%s / %.2f GiB\n", us, t / 1048576
+            }' /proc/meminfo
+          MEMSH
+
+          # ---- Workspace buttons 1-2-3-4 (bar) ----
           cat > "$CONF/hypr/ws-state.sh" <<'WSSTATE'
           #!/bin/sh
           # ws-state.sh N -> JSON for the bar button of workspace N (class: active / occupied / empty).
@@ -1373,13 +1348,13 @@ jobs:
 
           cat > "$CONF/hypr/ws-go.sh" <<'WSGO'
           #!/bin/sh
-          # ws-go.sh 1|2|3|next|prev -> switch workspace. Only workspaces 1-3 exist; next/prev wrap around.
+          # ws-go.sh 1|2|3|4|next|prev -> switch workspace. Only workspaces 1-4 exist; next/prev wrap around.
           cur=$(hyprctl -j activeworkspace 2>/dev/null | sed -n 's/.*"id": *\([0-9][0-9]*\).*/\1/p' | head -n1)
           case "$cur" in ''|*[!0-9]*) cur=1 ;; esac
           case "${1:-}" in
-            next) n=$(( cur % 3 + 1 )) ;;
-            prev) n=$(( (cur + 1) % 3 + 1 )) ;;
-            1|2|3) n=$1 ;;
+            next) n=$(( cur % 4 + 1 )) ;;
+            prev) n=$(( (cur + 2) % 4 + 1 )) ;;
+            1|2|3|4) n=$1 ;;
             *) exit 1 ;;
           esac
           # Lua-config Hyprland takes the hl.dsp form; the plain form is the fallback for older builds.
@@ -1390,7 +1365,7 @@ jobs:
 
           cat > "$CONF/hypr/ws-daemon.py" <<'WSDAEMON'
           #!/usr/bin/env python3
-          # Keeps the bar's 1-2-3 workspace buttons in sync. Listens to Hyprland's event
+          # Keeps the bar's 1-2-3-4 workspace buttons in sync. Listens to Hyprland's event
           # socket, writes the state to $XDG_RUNTIME_DIR/ws-state and pokes waybar
           # (signal 8) only when something changed. ws-state.sh reads that file.
           import glob, json, os, socket, subprocess, time
@@ -1649,7 +1624,7 @@ jobs:
           cat > "$AIROOT/usr/share/cachyos-hyprland/cheatsheet.txt" <<'CHEATTXT'
           # LAUNCH
           Super + Return|Terminal (kitty)
-          Super + Space / D|Apps (same launcher as the bar's square button)
+          Super + Space / D|Apps
           Super + Shift + Space|Command palette
           Super + P|Pick a wallpaper, recolour bar + terminal (matugen)
           Super + Shift + W|New random wallpaper
@@ -1666,12 +1641,12 @@ jobs:
           Super + Drag|Move window (mouse)
           Super + Right-drag|Resize window
 
-          # WORKSPACES (1, 2 and 3)
-          Super + 1 / 2 / 3|Switch to workspace
-          Super + Shift + 1 / 2 / 3|Move window to workspace
+          # WORKSPACES (1 to 4)
+          Super + 1 / 2 / 3 / 4|Switch to workspace
+          Super + Shift + 1 / 2 / 3 / 4|Move window to workspace
           Super + , / .|Previous / next workspace
           Super + Scroll|Cycle workspaces
-          Bar buttons 1 2 3|Click to switch
+          Bar buttons 1 2 3 4|Click to switch (only workspaces in use show)
 
           # SYSTEM
           Super + L|Lock screen
@@ -1694,7 +1669,6 @@ jobs:
           Click volume|Audio mixer, opens under the button
           Click language|Layout dropdown
           Double-click clock|Set timezone (type 5:30, 5, -8 ...)
-          Right-click square button|Command palette
 
           # MORE
           Docs|https://wiki.hypr.land/
@@ -1743,6 +1717,7 @@ jobs:
           │  Everything runs in RAM (toram). Changes are     │
           │  lost on reboot.                                 │
           │  Keep your files: run  save-progress             │
+          │  New version on a USB: update-with-usb           │
           │                                                  │
           │  Keyboard: Super+F1 · Power menu: Super+X        │
           ╰──────────────────────────────────────────────────╯
@@ -1783,6 +1758,15 @@ jobs:
               - Ventoy, or Rufus "ISO" mode (saves a folder on the USB)
             Not saved: installed programs and system settings. The save is not
             encrypted, so keep the USB safe.
+
+          Update without rebooting
+            Run `update-with-usb` in a terminal, then plug in a USB that has the new
+            version: a USB flashed with the new ISO, or a normal USB with the .iso file
+            on it. The new system is copied over the running one (your files, Wi-Fi,
+            timezone and wallpaper stay) and the bar and keybinds are refreshed. Open
+            programs keep the old version until restarted; a new kernel needs a reboot.
+            Needs free RAM about the size of the changes, and a version that already
+            includes this command.
 
           Verify download
             sha256sum -c <file>.iso.sha256
@@ -2427,6 +2411,12 @@ jobs:
             mount -o "$2,noatime,nosuid,nodev,noexec" "$1" "$MNT" 2>/dev/null
           }
           unmount_part() { sync; umount "$MNT" 2>/dev/null; rmdir "$MNT" 2>/dev/null; }
+          # Booted with toram: the whole OS is already in RAM, so the USB is free to unplug.
+          note_unplug() {
+            mountpoint -q /run/archiso/copytoram 2>/dev/null || return 0
+            [ -w /dev/console ] && echo "  The OS is fully loaded in RAM: you can unplug the USB now." >/dev/console
+            return 0
+          }
 
           # ------------------------------------------------------------------- RESTORE
           restore() {
@@ -2452,7 +2442,7 @@ jobs:
                 unmount_part
               done < <(writable_parts "$d")
             done
-            [ -n "$best_p" ] || exit 0
+            [ -n "$best_p" ] || { note_unplug; exit 0; }
 
             { echo; echo "  FOUND DATA! TRANSFERRING OVER..."; } >"$con"
             mount_part "$best_p" ro || { echo "  Could not read the saved data." >"$con"; exit 0; }
@@ -2492,6 +2482,7 @@ jobs:
                  fi ;;
             esac
             unmount_part
+            note_unplug
             exit 0
           }
 
@@ -2654,6 +2645,366 @@ jobs:
           ln -sf /etc/systemd/system/restore-progress.service \
             "$SYSD/multi-user.target.wants/restore-progress.service"
 
+      - name: Add update-with-usb (update the running OS from a USB, no reboot)
+        run: |
+          set -euo pipefail
+          AIROOT="cachyos/archiso/airootfs"
+          LIVE_USER=$(grep -m1 -oP '^user = "\K[^"@]+' "$AIROOT/etc/greetd/config.toml" || true)
+          LIVE_USER=${LIVE_USER:-liveuser}
+          echo "update-with-usb: live user is $LIVE_USER"
+          mkdir -p "$AIROOT/usr/local/bin"
+          cat > "$AIROOT/usr/local/bin/update-with-usb" <<'UPDATEUSB'
+          #!/bin/bash
+          # update-with-usb [--yes] [ISO-FILE | DEVICE | FOLDER]
+          #
+          # Update this running OS to a newer version WITHOUT rebooting. Plug in a USB that has
+          # the new version (flashed with the new ISO, or a normal USB with the .iso file on it).
+          # The new system files are copied over the running ones, in RAM. Not touched: your
+          # files, saved Wi-Fi networks, timezone, wallpaper and colours. The desktop config
+          # (bar, keybinds, launcher, notifications, terminal) is refreshed from the new
+          # version; your old copy is backed up first. Open programs keep running the old
+          # version until you restart them. A new kernel only takes effect after a reboot.
+          set -u
+
+          LIVE_USER="@LIVE_USER@"
+          SFS_REL="arch/x86_64/airootfs.sfs"
+          REL_FILE="etc/cachyos-hyprland-release"
+          M_PART=/run/update-part      # the USB partition
+          M_ISO=/run/update-iso        # an .iso file opened from the USB
+          M_NEW=/run/update-new        # the new system image
+          M_PROBE=/run/update-probe    # throwaway mount used while looking for the new version
+          FS_OK="vfat exfat ntfs ext2 ext3 ext4 btrfs f2fs xfs iso9660 udf"
+          ASSUME_YES=0
+          SRC_ARG=""
+
+          [ "$(id -u)" -eq 0 ] || exec sudo -- "$(readlink -f "$0")" "$@"
+
+          for a in "$@"; do
+            case "$a" in
+              -y|--yes) ASSUME_YES=1 ;;
+              -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+              *) SRC_ARG="$a" ;;
+            esac
+          done
+
+          say() { printf '%s\n' "$*"; }
+          die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+          ask() {
+            [ "$ASSUME_YES" = 1 ] && return 0
+            local a
+            read -r -p "$1 [Y/N] " a
+            case "$a" in [Yy]*) return 0 ;; *) return 1 ;; esac
+          }
+          cleanup() {
+            cd / 2>/dev/null
+            local m
+            for m in "$M_PROBE" "$M_NEW" "$M_ISO" "$M_PART"; do
+              mountpoint -q "$m" 2>/dev/null && umount "$m" 2>/dev/null
+              rmdir "$m" 2>/dev/null
+            done
+            return 0
+          }
+          trap cleanup EXIT
+
+          [ -d /run/archiso ] || die "this only works inside the live ISO."
+          command -v rsync >/dev/null 2>&1 || die "rsync is missing. Run: sudo pacman -Sy rsync   (newer ISOs include it)."
+          [ ! -e /var/lib/pacman/db.lck ] || die "pacman is busy. Wait for it to finish, then try again."
+
+          CUR_VER=$(sed -n 's/^VERSION="\(.*\)"/\1/p' /etc/cachyos-hyprland-release 2>/dev/null)
+          CUR_VER=${CUR_VER:-unknown}
+
+          # ----------------------------------------------------------- device helpers
+          rows() { lsblk -rpbno NAME,TYPE,PKNAME,SIZE,FSTYPE,LABEL,TRAN,RM 2>/dev/null | tr ' ' '\001'; }
+
+          usb_disks() {   # USB / removable whole disks that actually have media
+            local name type pk size fs label tran rm
+            rows | while IFS=$'\001' read -r name type pk size fs label tran rm; do
+              [ "$type" = disk ] && [ "${size:-0}" -gt 0 ] || continue
+              if [ "$tran" = usb ] || [ "$rm" = 1 ]; then echo "$name"; fi
+            done
+          }
+
+          members() {     # "device fstype" for the disk itself and each partition that has a filesystem
+            local disk=${1#/dev/} name type pk size fs label tran rm
+            rows | while IFS=$'\001' read -r name type pk size fs label tran rm; do
+              [ -n "$fs" ] || continue
+              if [ "${name#/dev/}" = "$disk" ] || [ "${pk#/dev/}" = "$disk" ]; then echo "$name $fs"; fi
+            done
+          }
+
+          sfs_version() {   # $1 = an airootfs.sfs file -> prints the ISO version stamped inside it
+            local v
+            mkdir -p "$M_PROBE"
+            mount -t squashfs -o ro,loop "$1" "$M_PROBE" 2>/dev/null || { rmdir "$M_PROBE" 2>/dev/null; return 1; }
+            v=$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$M_PROBE/$REL_FILE" 2>/dev/null)
+            umount "$M_PROBE" 2>/dev/null
+            rmdir "$M_PROBE" 2>/dev/null
+            echo "${v:-unknown}"
+          }
+
+          scan() {   # prints: version<TAB>device<TAB>kind<TAB>path   (kind: sfs = flashed ISO, iso = .iso file)
+            local d dev fs v f
+            mkdir -p "$M_PART" "$M_ISO"
+            for d in $(usb_disks); do
+              members "$d" | while read -r dev fs; do
+                case " $FS_OK " in *" $fs "*) ;; *) continue ;; esac
+                mount -o ro "$dev" "$M_PART" 2>/dev/null || continue
+                if [ -f "$M_PART/$SFS_REL" ] && v=$(sfs_version "$M_PART/$SFS_REL"); then
+                  printf '%s\t%s\tsfs\t%s\n' "$v" "$dev" "$SFS_REL"
+                fi
+                while IFS= read -r f; do
+                  mount -o ro,loop "$f" "$M_ISO" 2>/dev/null || continue
+                  if [ -f "$M_ISO/$SFS_REL" ] && v=$(sfs_version "$M_ISO/$SFS_REL"); then
+                    printf '%s\t%s\tiso\t%s\n' "$v" "$dev" "${f#"$M_PART"/}"
+                  fi
+                  umount "$M_ISO" 2>/dev/null
+                done < <(find "$M_PART" -maxdepth 2 -type f -iname 'cachyos-hyprland-*.iso' 2>/dev/null)
+                umount "$M_PART" 2>/dev/null
+              done
+            done
+          }
+
+          # ------------------------------------------------------- find the new version
+          mkdir -p "$M_PART" "$M_ISO" "$M_NEW"
+          SFS=""
+          if [ -n "$SRC_ARG" ]; then
+            if [ -b "$SRC_ARG" ]; then
+              mount -o ro "$SRC_ARG" "$M_PART" || die "could not read $SRC_ARG."
+              base="$M_PART"
+            elif [ -f "$SRC_ARG" ]; then
+              mount -o ro,loop "$SRC_ARG" "$M_ISO" || die "could not open $SRC_ARG as an ISO."
+              base="$M_ISO"
+            elif [ -d "$SRC_ARG" ]; then
+              base="$SRC_ARG"
+            else
+              die "'$SRC_ARG' is not a file, folder or device."
+            fi
+            SFS="$base/$SFS_REL"
+            [ -f "$SFS" ] || die "no system image ($SFS_REL) found in $SRC_ARG."
+          else
+            say "Plug in the USB that has the new version of this OS."
+            say "(a USB flashed with the new ISO, or a normal USB with the .iso file on it)"
+            say "(looking for it... press Ctrl+C to cancel)"
+            warned=0
+            same=0
+            while :; do
+              mapfile -t found < <(scan | awk -F'\t' '!seen[$1 FS $3 FS $4]++' | sort -t$'\t' -k1,1Vr)
+              usable=()
+              for line in "${found[@]}"; do
+                [ -n "$line" ] || continue
+                ver=${line%%$'\t'*}
+                if [ "$ver" = "$CUR_VER" ] && [ "$CUR_VER" != unknown ]; then same=1; continue; fi
+                usable+=("$line")
+              done
+              [ "${#usable[@]}" -gt 0 ] && break
+              if [ "$same" = 1 ] && [ "$warned" = 0 ]; then
+                say "Found the version you are already running ($CUR_VER). Waiting for a different one..."
+                warned=1
+              fi
+              sleep 3
+            done
+            if [ "${#usable[@]}" -gt 1 ]; then
+              say "Found these versions (newest first):"
+              i=1
+              for line in "${usable[@]}"; do
+                IFS=$'\t' read -r v dev kind rel <<<"$line"
+                printf '  %d) %s   (%s: %s)\n' "$i" "$v" "$dev" "$rel"
+                i=$((i + 1))
+              done
+              read -r -p "Which one? [1-${#usable[@]}, Enter = 1] " n
+              case "$n" in ''|*[!0-9]*) n=1 ;; esac
+              [ "$n" -ge 1 ] && [ "$n" -le "${#usable[@]}" ] || n=1
+              line=${usable[$((n - 1))]}
+            else
+              line=${usable[0]}
+            fi
+            IFS=$'\t' read -r _ DEV KIND REL <<<"$line"
+            mount -o ro "$DEV" "$M_PART" || die "could not read $DEV."
+            if [ "$KIND" = iso ]; then
+              mount -o ro,loop "$M_PART/$REL" "$M_ISO" || die "could not open $REL."
+              SFS="$M_ISO/$SFS_REL"
+            else
+              SFS="$M_PART/$REL"
+            fi
+          fi
+
+          mount -t squashfs -o ro,loop "$SFS" "$M_NEW" || die "could not open the new system image."
+          [ -d "$M_NEW/usr" ] || die "the new system image looks empty or damaged."
+          NEW_VER=$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$M_NEW/$REL_FILE" 2>/dev/null)
+          NEW_VER=${NEW_VER:-unknown}
+          say "Running version: $CUR_VER"
+          say "New version:     $NEW_VER"
+
+          if [ "$NEW_VER" = "$CUR_VER" ] && [ "$NEW_VER" != unknown ]; then
+            ask "That is the version you are already running. Apply it again anyway?" || { say "Nothing was changed."; exit 0; }
+          elif [ "$NEW_VER" != unknown ] && [ "$CUR_VER" != unknown ] \
+               && [ "$(printf '%s\n%s\n' "$NEW_VER" "$CUR_VER" | sort -V | head -n1)" = "$NEW_VER" ]; then
+            ask "$NEW_VER is OLDER than the running $CUR_VER. Go back to it anyway?" || { say "Nothing was changed."; exit 0; }
+          fi
+
+          NEW_K=$(ls "$M_NEW/usr/lib/modules" 2>/dev/null | head -n1)
+          OLD_K=$(uname -r)
+          KERNEL_CHANGED=0
+          if [ -n "$NEW_K" ] && [ "$NEW_K" != "$OLD_K" ]; then
+            KERNEL_CHANGED=1
+            say ""
+            say "NOTE: the new version has a different kernel ($NEW_K; you are running $OLD_K)."
+            say "The update works, but the kernel itself only changes after a reboot. Until then the"
+            say "graphics driver (especially NVIDIA) can be out of step with the old kernel."
+          fi
+
+          # ----------------------------------------------------------- what gets copied
+          RS=(rsync -aHX --numeric-owner)
+          # Files that belong to THIS running session, never overwritten:
+          ETC_EXCL=(
+            --exclude=/machine-id --exclude=/hostname --exclude=/localtime --exclude=/resolv.conf
+            --exclude=/mtab --exclude=/fstab --exclude=/adjtime --exclude=/ld.so.cache
+            --exclude=/passwd --exclude=/shadow --exclude=/group --exclude=/gshadow
+            --exclude=/subuid --exclude=/subgid
+            --exclude='/passwd-' --exclude='/shadow-' --exclude='/group-' --exclude='/gshadow-'
+            --exclude=/NetworkManager/system-connections
+            --exclude=/pacman.d/gnupg --exclude=/pacman.d/mirrorlist
+            --exclude='/ssh/ssh_host_*'
+          )
+          # The running kernel's modules stay, or the running system could not load drivers.
+          USR_EXCL=(--exclude=/lib/modules)
+
+          sync_part() {   # sync_part STEP [extra rsync options]   STEP: usr | opt | etc | pacman
+            local step=$1
+            shift
+            case "$step" in
+              usr)
+                "${RS[@]}" --delete "${USR_EXCL[@]}" "$@" "$M_NEW/usr/" /usr/ ;;
+              opt)
+                if [ -d "$M_NEW/opt" ]; then "${RS[@]}" --delete "$@" "$M_NEW/opt/" /opt/; else return 0; fi ;;
+              etc)
+                "${RS[@]}" "${ETC_EXCL[@]}" "$@" "$M_NEW/etc/" /etc/ ;;
+              pacman)
+                if [ -d "$M_NEW/var/lib/pacman/local" ]; then
+                  "${RS[@]}" --delete "$@" "$M_NEW/var/lib/pacman/local/" /var/lib/pacman/local/
+                else
+                  return 0
+                fi ;;
+            esac
+          }
+
+          say ""
+          say "Checking how much room the update needs..."
+          need=0
+          for step in usr opt etc pacman; do
+            b=$(sync_part "$step" -n --stats 2>/dev/null | awk '/Total transferred file size:/ { gsub(",", "", $5); print $5 }')
+            need=$((need + ${b:-0}))
+          done
+          margin=$((256 * 1024 * 1024))
+          avail=$(df --output=avail -B1 / | tail -n1 | tr -dc '0-9')
+          memavail=$(awk '/^MemAvailable:/ { print $2 * 1024 }' /proc/meminfo)
+          say "The update changes about $((need / 1024 / 1024)) MiB (kept in RAM until you reboot)."
+
+          [ "$memavail" -ge $((need + 3 * margin)) ] \
+            || die "not enough free RAM for the update (need about $(((need + 3 * margin) / 1024 / 1024)) MiB free). Close some programs and try again."
+          if [ "$avail" -lt $((need + margin)) ]; then
+            cow=/run/archiso/cowspace
+            mountpoint -q "$cow" 2>/dev/null || die "not enough room in the live system's writable layer."
+            size=$(df --output=size -B1 "$cow" | tail -n1 | tr -dc '0-9')
+            mount -o remount,size=$((size + need + margin - avail)) "$cow" 2>/dev/null \
+              || die "could not make room for the update in the live system's writable layer."
+            say "Made more room for the update."
+          fi
+
+          say ""
+          ask "Update from $CUR_VER to $NEW_VER now? Your files stay; programs you installed with pacman since boot are removed (a reboot would do the same)." \
+            || { say "Cancelled. Nothing was changed."; exit 1; }
+
+          # ------------------------------------------------------------------ the update
+          fail=0
+          say "Updating the system files (this can take a few minutes)..."
+          for step in usr opt etc pacman; do
+            sync_part "$step" --info=progress2
+            rc=$?
+            case "$rc" in
+              0|24) ;;
+              *) fail=1; say "  warning: part '$step' reported problems (code $rc)." ;;
+            esac
+          done
+          say ""
+          say "Finishing up..."
+          command -v systemd-sysusers >/dev/null 2>&1 && systemd-sysusers >/dev/null 2>&1
+          command -v systemd-tmpfiles >/dev/null 2>&1 && systemd-tmpfiles --create >/dev/null 2>&1
+          ldconfig >/dev/null 2>&1
+          command -v glib-compile-schemas >/dev/null 2>&1 && glib-compile-schemas /usr/share/glib-2.0/schemas >/dev/null 2>&1
+          command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications >/dev/null 2>&1
+          command -v fc-cache >/dev/null 2>&1 && fc-cache -f >/dev/null 2>&1
+          systemctl daemon-reload >/dev/null 2>&1
+
+          # ------------------------------------- desktop config in your home (new look)
+          HOME_DIR=$(getent passwd "$LIVE_USER" | cut -d: -f6)
+          HOME_DIR=${HOME_DIR:-/home/$LIVE_USER}
+          LIVE_UID=$(id -u "$LIVE_USER" 2>/dev/null)
+          LIVE_GROUP=$(id -gn "$LIVE_USER" 2>/dev/null)
+          BK="$HOME_DIR/.local/share/update-backup/${CUR_VER}-$(date +%Y%m%d-%H%M%S)"
+
+          refresh_dir() {   # refresh_dir NAME [rsync options]: copy the new default config of ~/.config/NAME
+            local d=$1
+            shift
+            [ -d "/etc/skel/.config/$d" ] || return 0
+            if [ -d "$HOME_DIR/.config/$d" ]; then
+              mkdir -p "$BK/.config"
+              cp -a "$HOME_DIR/.config/$d" "$BK/.config/" 2>/dev/null
+            fi
+            mkdir -p "$HOME_DIR/.config/$d"
+            rsync -a --chown="$LIVE_USER:$LIVE_GROUP" "$@" "/etc/skel/.config/$d/" "$HOME_DIR/.config/$d/"
+          }
+          # Your wallpaper, colour theme and first-run flags are kept.
+          refresh_dir hypr --exclude=/wallpaper.png '--exclude=/wallpaper-custom.*' --exclude=/.tz-set-done --exclude=/.first-run-done
+          refresh_dir waybar --exclude=/colors.css
+          refresh_dir wofi
+          refresh_dir mako
+          refresh_dir kitty --exclude=/colors.conf
+          [ -d "$BK" ] && chown -R "$LIVE_USER:$LIVE_GROUP" "$HOME_DIR/.local/share/update-backup" 2>/dev/null
+
+          # Apply it to the running desktop (reload Hyprland, restart the bar), if one is running.
+          apply_live() {
+            local rt=/run/user/$LIVE_UID sig wl
+            [ -d "$rt/hypr" ] || return 0
+            sig=$(ls -t "$rt/hypr" 2>/dev/null | head -n1)
+            wl=$(cd "$rt" && ls -d wayland-[0-9]* 2>/dev/null | grep -v '\.lock$' | head -n1)
+            [ -n "$sig" ] && [ -n "$wl" ] || return 0
+            as_user() {
+              runuser -u "$LIVE_USER" -- env HOME="$HOME_DIR" XDG_RUNTIME_DIR="$rt" HYPRLAND_INSTANCE_SIGNATURE="$sig" \
+                WAYLAND_DISPLAY="$wl" DBUS_SESSION_BUS_ADDRESS="unix:path=$rt/bus" "$@"
+            }
+            as_user hyprctl reload >/dev/null 2>&1
+            pkill -u "$LIVE_UID" -f ws-daemon.py 2>/dev/null
+            pkill -u "$LIVE_UID" -x waybar 2>/dev/null
+            sleep 0.5
+            as_user setsid -f waybar >/dev/null 2>&1
+            as_user setsid -f sh -c 'sleep 3; exec python3 ~/.config/hypr/ws-daemon.py' >/dev/null 2>&1
+            as_user makoctl reload >/dev/null 2>&1
+            return 0
+          }
+          apply_live
+
+          # ---------------------------------------------------------------------- done
+          say ""
+          if [ "$fail" = 0 ]; then
+            say "Done! Updated $CUR_VER -> $NEW_VER. You can unplug the USB now."
+          else
+            say "Updated $CUR_VER -> $NEW_VER, but some files could not be written (see the warnings above)."
+            say "A reboot is the safest way to finish."
+          fi
+          say "Your files, Wi-Fi networks, timezone, wallpaper and colours were left alone."
+          [ -d "$BK" ] && say "Your previous desktop config is backed up in: $BK"
+          say "Programs that are already open keep running the old version until you restart them."
+          [ "$KERNEL_CHANGED" = 1 ] && say "The new kernel only starts after a reboot (your saved files come back by themselves)."
+          exit 0
+          UPDATEUSB
+          sed -i "s/@LIVE_USER@/${LIVE_USER}/" "$AIROOT/usr/local/bin/update-with-usb"
+          bash -n "$AIROOT/usr/local/bin/update-with-usb"
+          # archiso does not keep file modes unless profiledef.sh lists them.
+          while IFS= read -r pd; do
+            sedx -o "$pd" '/^file_permissions=(/a\["/usr/local/bin/update-with-usb"]="0:0:755"'
+          done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
+
       - name: Patch Boot Entries
         run: |
           set -euo pipefail
@@ -2761,7 +3112,7 @@ jobs:
           done
           [ -s cachyos/archiso/README.txt ] \
             || { echo "VERIFY FAIL: missing/empty archiso/README.txt" >&2; fail=1; }
-          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh popup-pos.sh kb-menu.sh clock-click.sh tz-prompt.sh wifi.sh volume.sh launcher.sh theme.sh wallpaper.sh ws-state.sh ws-go.sh; do
+          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh popup-pos.sh kb-menu.sh clock-click.sh tz-prompt.sh wifi.sh volume.sh launcher.sh theme.sh wallpaper.sh ws-state.sh ws-go.sh mem.sh; do
             if ! sh -n "cachyos/archiso/airootfs/etc/skel/.config/hypr/$sh_file"; then
               echo "VERIFY FAIL: $sh_file has a shell syntax error" >&2; fail=1
             fi
@@ -2788,13 +3139,13 @@ jobs:
           if ! grep -q 'ws-daemon\.py' "$R/hypr/hyprland.lua"; then
             echo "VERIFY FAIL: hyprland.lua does not start ws-daemon.py" >&2; fail=1
           fi
-          if grep -q 'for i = 1, 9' "$R/hypr/hyprland.lua" || ! grep -q 'for i = 1, 3 do' "$R/hypr/hyprland.lua"; then
-            echo "VERIFY FAIL: workspace binds must cover 1-3 only" >&2; fail=1
+          if grep -q 'for i = 1, 9' "$R/hypr/hyprland.lua" || ! grep -q 'for i = 1, 4 do' "$R/hypr/hyprland.lua"; then
+            echo "VERIFY FAIL: workspace binds must cover 1-4 only" >&2; fail=1
           fi
           if grep -q 'hyprland/workspaces' "$R/waybar/config.jsonc"; then
             echo "VERIFY FAIL: waybar must use the custom 1-2-3 buttons, not hyprland/workspaces" >&2; fail=1
           fi
-          for w in custom/ws1 custom/ws2 custom/ws3 group/workspaces; do
+          for w in custom/ws1 custom/ws2 custom/ws3 custom/ws4 group/workspaces; do
             grep -qF "$w" "$R/waybar/config.jsonc" || { echo "VERIFY FAIL: waybar config has no $w" >&2; fail=1; }
           done
           if grep -rqi 'anyrun\|nautilus' cachyos/archiso/airootfs/etc/skel cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
@@ -2810,7 +3161,7 @@ jobs:
             echo "VERIFY FAIL: leftover Brave wallpaper/launcher reference" >&2; fail=1
           fi
 
-          for want in wifi.sh volume.sh kb-menu.sh clock-click.sh launcher.sh ws-go.sh 'power.sh bar'; do
+          for want in wifi.sh volume.sh kb-menu.sh clock-click.sh ws-go.sh mem.sh; do
             if ! grep -qF "$want" cachyos/archiso/airootfs/etc/skel/.config/waybar/config.jsonc; then
               echo "VERIFY FAIL: waybar config does not call $want" >&2; fail=1
             fi
