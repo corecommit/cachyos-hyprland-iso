@@ -950,6 +950,7 @@ jobs:
           gtk_dark=true
           width=400
           height=450
+          WOFICONF
           cat > "$CONF/wofi/style.css" <<'WOFICSS'
           #window {
             margin: 0;
