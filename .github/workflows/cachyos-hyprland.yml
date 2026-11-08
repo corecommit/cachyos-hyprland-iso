@@ -629,8 +629,8 @@ jobs:
               gaps_out = 10,
               border_size = 2,
               col = {
-                active_border = "rgba(b4befeee)",
-                inactive_border = "rgba(31324488)",
+                active_border = "rgba(819299ee)",
+                inactive_border = "rgba(413d3a88)",
               },
               layout = "dwindle",
             },
@@ -791,28 +791,28 @@ jobs:
               "on-click": "sh ~/.config/hypr/kb-menu.sh"
             },
             "backlight": {
-              "format": "<span color='#b4befe'>\uf185</span> {percent}%",
+              "format": "<span color='#c7ab7a'>\uf185</span> {percent}%",
               "tooltip": false,
               "on-scroll-up": "brightnessctl set 5%+",
               "on-scroll-down": "brightnessctl set 5%-"
             },
             "battery": {
-              "format": "<span color='#b4befe'>{icon}</span> {capacity}%",
-              "format-charging": "<span color='#b4befe'>\uf0e7</span> {capacity}%",
-              "format-full": "<span color='#b4befe'>\uf240</span> {capacity}%",
+              "format": "<span color='#c7ab7a'>{icon}</span> {capacity}%",
+              "format-charging": "<span color='#c7ab7a'>\uf0e7</span> {capacity}%",
+              "format-full": "<span color='#c7ab7a'>\uf240</span> {capacity}%",
               "format-icons": ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"],
               "states": { "warning": 25, "critical": 10 },
               "interval": 30
             },
             "disk": {
-              "format": "<span color='#b4befe'>\uf0a0</span> {percentage_used}%",
+              "format": "<span color='#c7ab7a'>\uf0a0</span> {percentage_used}%",
               "path": "/",
               "interval": 30,
               "tooltip-format": "{used} used of {total} on /"
             },
             "pulseaudio": {
-              "format": "<span color='#b4befe'>{icon}</span> {volume}%",
-              "format-muted": "<span color='#b4befe'>\uf6a9</span> muted",
+              "format": "<span color='#c7ab7a'>{icon}</span> {volume}%",
+              "format-muted": "<span color='#c7ab7a'>\uf6a9</span> muted",
               "format-icons": { "default": ["\uf026", "\uf027", "\uf028"] },
               "on-click": "sh ~/.config/hypr/volume.sh",
               "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
@@ -821,10 +821,10 @@ jobs:
             "custom/mem": {
               "exec": "sh ~/.config/hypr/mem.sh",
               "return-type": "json",
-              "format": "<span color='#b4befe'>\uf538</span> {}",
+              "format": "<span color='#c7ab7a'>\uf538</span> {}",
               "interval": 5
             },
-            "cpu": { "format": "<span color='#b4befe'>\uf2db</span> {usage}%", "interval": 3, "tooltip": false },
+            "cpu": { "format": "<span color='#c7ab7a'>\uf2db</span> {usage}%", "interval": 3, "tooltip": false },
             "clock": { "format": "{:%H:%M %d-%m-%Y}", "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt>{calendar}</tt>", "on-click": "sh ~/.config/hypr/clock-click.sh" }
           }
           WBCONF
@@ -833,15 +833,14 @@ jobs:
           /* colors.css holds the base colours; Super+P (matugen) rewrites it. */
           @import "colors.css";
 
-          @define-color bg alpha(@surface_container_high, 0.97);
-          @define-color border_dim rgba(255, 255, 255, 0.10);
-          @define-color text @on_surface;
-          @define-color text_dim @on_surface_variant;
+          @define-color bg @surface_container_high;
+          @define-color pill @surface_container_highest;
+          @define-color text @primary;
+          @define-color text_dim alpha(@primary, 0.55);
           @define-color accent @primary;
-          @define-color pink @tertiary;
+          @define-color frame @secondary;
           @define-color warn #f9e2af;
           @define-color crit @error;
-          @define-color pill alpha(@on_surface, 0.08);
 
           * {
             font-family: monospace, "Font Awesome 6 Free", "WenQuanYi Micro Hei", sans-serif;
@@ -852,57 +851,52 @@ jobs:
             min-height: 0;
           }
 
-          /* Floating bar: a gap to the top, left and right, rounded corners. */
+          /* Floating bar: gap to the top, left and right (set in config.jsonc), steel-blue frame. */
           window#waybar {
             background: @bg;
             color: @text;
-            border: 2px solid alpha(@accent, 0.45);
-            border-radius: 14px;
+            border: 2px solid @frame;
+            border-radius: 8px;
           }
 
-          .modules-left { padding-left: 4px; }
-          .modules-right { padding-right: 4px; }
+          .modules-left { padding-left: 6px; }
+          .modules-right { padding-right: 6px; }
 
-          /* Every item is its own rounded pill. */
+          /* Every item is a small rounded pill. */
           #tray, #network, #language, #backlight, #battery, #disk,
           #pulseaudio, #custom-mem, #cpu, #clock, #workspaces {
             background: @pill;
-            border-radius: 9px;
-            padding: 0 10px;
-            margin: 4px 0;
+            color: @text;
+            border-radius: 4px;
+            padding: 0 11px;
+            margin: 5px 4px;
           }
 
           #network:hover, #language:hover, #pulseaudio:hover, #clock:hover {
-            background: alpha(@text, 0.16);
+            background: alpha(@primary, 0.25);
           }
 
-          /* ── Workspaces 1-4 (all four always shown, in the middle) ── */
+          /* ── Workspaces 1-4, all always shown, in the middle ── */
           #workspaces {
-            padding: 0 4px;
+            padding: 0 6px;
           }
           #custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4 {
-            min-width: 18px;
-            padding: 0 8px;
-            margin: 3px 1px;
-            border-radius: 7px;
-            color: @text_dim;
+            min-width: 14px;
+            padding: 0 6px;
+            margin: 3px 0;
+            border-radius: 3px;
+            color: @text;
             background: transparent;
           }
-          #custom-ws1.occupied, #custom-ws2.occupied, #custom-ws3.occupied, #custom-ws4.occupied {
-            color: @text;
+          #custom-ws1.empty, #custom-ws2.empty, #custom-ws3.empty, #custom-ws4.empty {
+            color: @text_dim;
           }
           #custom-ws1.active, #custom-ws2.active, #custom-ws3.active, #custom-ws4.active {
-            color: @text;
-            background: alpha(@accent, 0.30);
-            border-bottom: 2px solid @accent;
+            color: @on_primary;
+            background: @primary;
           }
           #custom-ws1:hover, #custom-ws2:hover, #custom-ws3:hover, #custom-ws4:hover {
-            background: alpha(@text, 0.12);
-          }
-
-          #clock {
-            color: @pink;
-            font-weight: 700;
+            background: alpha(@primary, 0.25);
           }
 
           /* ── Status colors ── */
@@ -956,7 +950,7 @@ jobs:
           cat > "$CONF/wofi/style.css" <<'WOFICSS'
           window {
             margin: 0;
-            border: 1px solid #2a2a2a;
+            border: 1px solid #819299;
             border-radius: 10px;
             background-color: rgba(0, 0, 0, 0.94);
             font-family: "Inter", "WenQuanYi Micro Hei", "Noto Sans", "DejaVu Sans", sans-serif;
@@ -966,18 +960,18 @@ jobs:
           #input {
             margin: 0 0 10px 0;
             padding: 10px 14px;
-            border: 1px solid #2a2a2a;
+            border: 1px solid #413d3a;
             border-radius: 8px;
-            background-color: #0d0d0d;
-            color: #f0f0f0;
+            background-color: #1d1d1d;
+            color: #c7ab7a;
             box-shadow: none;
             outline: none;
           }
-          #input:focus { border-color: #6b6b6b; }
+          #input:focus { border-color: #819299; }
           #scroll { margin: 0; }
           #inner-box { background-color: transparent; }
-          #entry { padding: 8px 12px; border-radius: 6px; color: #cfcfcf; }
-          #entry:selected { background-color: #1c1c1c; color: #ffffff; }
+          #entry { padding: 8px 12px; border-radius: 6px; color: #c7ab7a; }
+          #entry:selected { background-color: #413d3a; color: #d4be98; }
           #text { color: inherit; }
           #img { margin-right: 10px; }
           WOFICSS
@@ -1226,18 +1220,23 @@ jobs:
 
           # Base colours for the bar and kitty; Super+P (matugen) overwrites these files.
           cat > "$CONF/waybar/colors.css" <<'WBCOLORS'
-          @define-color surface #0a0a12;
-          @define-color surface_container_high #23232b;
-          @define-color on_surface #e0e0e0;
-          @define-color on_surface_variant #787878;
-          @define-color primary #b4befe;
-          @define-color on_primary #0a0a12;
-          @define-color tertiary #f5a6d7;
+          @define-color surface #1d1d1d;
+          @define-color surface_container_high #282828;
+          @define-color surface_container_highest #413d3a;
+          @define-color on_surface #c7ab7a;
+          @define-color on_surface_variant #8f7d5c;
+          @define-color primary #c7ab7a;
+          @define-color on_primary #1d1d1d;
+          @define-color secondary #819299;
+          @define-color tertiary #819299;
           @define-color error #f38ba8;
           WBCOLORS
           cat > "$CONF/kitty/colors.conf" <<'KITTYCOLORS'
           background #000000
           foreground #e6e6e6
+          cursor #c7ab7a
+          selection_background #c7ab7a
+          selection_foreground #1d1d1d
           KITTYCOLORS
 
           cat > "$CONF/fish/config.fish" <<'FISHCONF'
@@ -1722,10 +1721,12 @@ jobs:
           cat > "$CONF/matugen/templates/waybar-colors.css" <<'MATUGENWB'
           @define-color surface {{colors.surface.default.hex}};
           @define-color surface_container_high {{colors.surface_container_high.default.hex}};
+          @define-color surface_container_highest {{colors.surface_container_highest.default.hex}};
           @define-color on_surface {{colors.on_surface.default.hex}};
           @define-color on_surface_variant {{colors.on_surface_variant.default.hex}};
           @define-color primary {{colors.primary.default.hex}};
           @define-color on_primary {{colors.on_primary.default.hex}};
+          @define-color secondary {{colors.secondary.default.hex}};
           @define-color tertiary {{colors.tertiary.default.hex}};
           @define-color error {{colors.error.default.hex}};
           MATUGENWB
@@ -2294,9 +2295,9 @@ jobs:
               size = 300, 50
               outline_thickness = 2
               dots_size = 0.25
-              outer_color = rgba(180, 190, 254, 0.8)
-              inner_color = rgba(10, 10, 18, 0.9)
-              font_color = rgb(224, 224, 224)
+              outer_color = rgba(199, 171, 122, 0.8)
+              inner_color = rgba(40, 40, 40, 0.9)
+              font_color = rgb(199, 171, 122)
               placeholder_text = Press Enter to unlock
               position = 0, -20
               halign = center
@@ -2305,7 +2306,7 @@ jobs:
           label {
               monitor =
               text = $TIME
-              color = rgba(224, 224, 224, 1.0)
+              color = rgba(199, 171, 122, 1.0)
               font_size = 96
               font_family = Inter
               position = 0, 120
@@ -2315,7 +2316,7 @@ jobs:
           label {
               monitor =
               text = cmd[update:60000] date +"%A, %d %B"
-              color = rgba(180, 190, 254, 1.0)
+              color = rgba(129, 146, 153, 1.0)
               font_size = 20
               font_family = Inter
               position = 0, 20
@@ -2326,9 +2327,9 @@ jobs:
 
           cat > "$CONF/mako/config" <<'MAKOCONF'
           font=Inter 11
-          background-color=#0a0a12ee
-          text-color=#e0e0e0
-          border-color=#b4befe
+          background-color=#282828ee
+          text-color=#c7ab7a
+          border-color=#819299
           border-size=1
           border-radius=6
           padding=12
