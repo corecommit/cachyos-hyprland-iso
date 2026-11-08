@@ -1495,7 +1495,7 @@ jobs:
               "new_tab_page": {
                 "shows_options": 1,
                 "hide_all_widgets": true,
-                "show_background_image": false,
+                "show_background_image": true,
                 "show_branded_background_image": false,
                 "show_clock": false,
                 "show_stats": false,
@@ -1510,6 +1510,33 @@ jobs:
             }
           }
           BRAVEPREFS
+
+                    # ---- Brave: new random wallpaper every time Brave is opened ----
+          mkdir -p "$AIROOT/usr/local/bin" "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
+          cat > "$AIROOT/usr/local/bin/brave" <<'BRAVEWRAP'
+          #!/bin/sh
+          # Regenerate Brave's custom wallpaper (new random picture, old one replaced),
+          # then start the real Brave. Skipped if Brave is already running.
+          D="$HOME/.config/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
+          GEN=/usr/share/cachyos-hyprland/genwall.py
+          if ! pgrep -x brave >/dev/null 2>&1; then
+            mkdir -p "$D"
+            found=0
+            for f in "$D"/*; do
+              [ -f "$f" ] || continue
+              found=1
+              python3 "$GEN" png "$f" 2>/dev/null   # atomic: written to .tmp, then moved over the old file
+            done
+            [ "$found" = 1 ] || python3 "$GEN" png "$D/background.png" 2>/dev/null
+          fi
+          exec /usr/bin/brave "$@"
+          BRAVEWRAP
+          sh -n "$AIROOT/usr/local/bin/brave"
+
+          # archiso does not keep file modes unless profiledef.sh lists them.
+          while IFS= read -r pd; do
+            sedx -o "$pd" '/^file_permissions=(/a\[\"/usr/local/bin/brave\"]=\"0:0:755\"'
+          done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
 
           # ---- matugen (Super+P): colour scheme from a wallpaper ----
           cat > "$CONF/matugen/config.toml" <<'MATUGENCONF'
