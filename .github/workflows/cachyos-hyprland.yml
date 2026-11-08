@@ -941,20 +941,20 @@ jobs:
 
           cat > "$CONF/wofi/config" <<'WOFICONF'
           allow_images=true
-          image_size=24
+          image_size=30
           insensitive=true
           matching=fuzzy
           location=center
           hide_scroll=true
           no_actions=true
           gtk_dark=true
-          WOFICONF
-
+          width=400
+          height=450
           cat > "$CONF/wofi/style.css" <<'WOFICSS'
-          window {
+          #window {
             margin: 0;
-            border: 1px solid #819299;
-            border-radius: 10px;
+            border: 1px solid #191919;
+            border-radius: 5px;
             background-color: rgba(0, 0, 0, 0.94);
             font-family: "Inter", "WenQuanYi Micro Hei", "Noto Sans", "DejaVu Sans", sans-serif;
             font-size: 15px;
@@ -962,9 +962,9 @@ jobs:
           #outer-box { margin: 14px; background-color: transparent; }
           #input {
             margin: 0 0 10px 0;
-            padding: 10px 14px;
+            padding: 1px 14px;
             border: 1px solid #413d3a;
-            border-radius: 8px;
+            border-radius: 6px;
             background-color: #1d1d1d;
             color: #c7ab7a;
             box-shadow: none;
@@ -972,8 +972,8 @@ jobs:
           }
           #input:focus { border-color: #819299; }
           #scroll { margin: 0; }
-          #inner-box { background-color: transparent; }
-          #entry { padding: 8px 12px; border-radius: 6px; color: #c7ab7a; }
+          #inner-box { background-color: transparent;}
+          #entry { padding: 8px 12px; border-radius: 5px; color: #c7ab7a; }
           #entry:selected { background-color: #413d3a; color: #d4be98; }
           #text { color: inherit; }
           #img { margin-right: 10px; }
