@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.4
+
+### Added
+- `update-with-usb` command: update the running system from a USB without rebooting. Run it in a terminal, then plug in a USB flashed with the new ISO, or one that has the `.iso` file on it. Your files, saved Wi-Fi networks, timezone, wallpaper and colours stay. The bar, keybinds, launcher and notification config are refreshed from the new version (your old copies are backed up in `~/.local/share/update-backup/`), and the bar restarts by itself.
+- After a toram boot restores your saved files, it now tells you when the USB is free to unplug.
+- `rsync` is now included (needed by `update-with-usb`).
+
+### Changed
+- New top bar: flat and full width, with no gaps. Left side: workspace buttons (the active one is underlined) and the window title. Right side: disk usage, volume, memory as used / total, CPU and the clock. Wi-Fi (now icon only), keyboard layout, tray, battery and brightness are still there and only show when relevant.
+- 4 workspaces instead of 3. Super+1 to 4, Super+Shift+1 to 4, Super+, / Super+. and Super+scroll cycle through all of them. Only workspaces in use are shown in the bar.
+- The volume, language and timezone popups now open right under the thinner bar.
+- README, welcome message and the Keyboard Shortcuts window (Super+F1) updated.
+
+### Removed
+- The launcher, power and idle buttons from the top bar. Super+Space, Super+X and the command palette (Super+Shift+Space) still work.
+
+### Notes
+- Open programs keep running the old version after `update-with-usb` until you restart them, and a new kernel only starts after a reboot.
+- Your current ISO does not have `update-with-usb`, so boot this version normally once. Later updates can use it.
+
 ## 1.1.3
 
 ### Added
