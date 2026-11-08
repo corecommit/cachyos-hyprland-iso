@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.4
+## [1.1.4] - 2026-11-08
 
 ### Added
 - `updateos` command: update the running system from a USB without rebooting. Run it in a terminal, then plug in a USB flashed with the new ISO, or one that has the `.iso` file on it. Your files, saved Wi-Fi networks, timezone, wallpaper and colours stay. The bar, keybinds, launcher and notification config are refreshed from the new version (your old copies are backed up in `~/.local/share/update-backup/`), and the bar restarts by itself.
@@ -20,7 +20,7 @@
 - Open programs keep running the old version after `updateos` until you restart them, and a new kernel only starts after a reboot.
 - Your current ISO does not have `updateos`, so boot this version normally once. Later updates can use it.
 
-## 1.1.3
+## [1.1.3] - 2026-11-08
 
 ### Added
 - Brave gets a new random wallpaper on its new tab page every time it is opened.
@@ -32,7 +32,7 @@
 - Corners are less rounded across the desktop: windows, the bar, the app launcher and notifications.
 - README updated: Brave, the current shortcuts, and a new "Saving your progress" section.
 
-## 1.1.2
+## [1.1.2] - 2026-11-07
 
 ### Added
 - `save-progress` command: run it in a terminal to save your home folder (files up to 10 MB each) to the USB you booted from. Next boot the ISO finds the saved data and restores it automatically ("FOUND DATA! TRANSFERRING OVER..."), so browser logins and files survive reboots. Works with USBs written by balenaEtcher / Rufus DD mode (creates a small save partition) and with Ventoy / Rufus ISO mode (saves a folder on the USB).
