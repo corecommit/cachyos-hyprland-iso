@@ -4,13 +4,17 @@
 
 ### Added
 - `updateos` command: update the running system from a USB without rebooting. Run it in a terminal, then plug in a USB flashed with the new ISO, or one that has the `.iso` file on it. Your files, saved Wi-Fi networks, timezone, wallpaper and colours stay. The bar, keybinds, launcher and notification config are refreshed from the new version (your old copies are backed up in `~/.local/share/update-backup/`), and the bar restarts by itself.
+- `--help` (or `-h`) for `save-progress` and `updateos`. It shows what the command does and its options, and works without a password. An unknown option now prints the help instead of being ignored.
+- Brave gets a new random wallpaper on every new tab. It is made by the same generator as the desktop wallpaper and placed in `~/.config/BraveSoftware/Brave-Browser/Default/sanitized_background_images/`. The old picture is deleted each time, so only one ever exists. A new one is also made at login, on Super+Shift+W and when Brave starts.
 - After a toram boot restores your saved files, it now tells you when the USB is free to unplug.
 - `rsync` is now included (needed by `updateos`).
 
 ### Changed
-- New top bar: flat and full width, with no gaps. Left side: workspace buttons (the active one is underlined) and the window title. Right side: disk usage, volume, memory as used / total, CPU and the clock. Wi-Fi (now icon only), keyboard layout, tray, battery and brightness are still there and only show when relevant.
-- 4 workspaces instead of 3. Super+1 to 4, Super+Shift+1 to 4, Super+, / Super+. and Super+scroll cycle through all of them. Only workspaces in use are shown in the bar.
-- The volume, language and timezone popups now open right under the thinner bar.
+- New top bar: floating, with a small gap to the top, left and right and rounded corners. Every item is its own rounded pill. Left side: disk usage, memory (percent, hover for used / total), CPU and battery. Middle: all 4 workspace buttons (the active one is highlighted). Right side: tray, keyboard layout and brightness (only when relevant), volume, Wi-Fi with live network speed, and the clock with the date. The window title is no longer in the bar.
+- 4 workspaces instead of 3. Super+1 to 4, Super+Shift+1 to 4, Super+, / Super+. and Super+scroll cycle through all of them. All four are always shown in the bar.
+- The volume, language and timezone popups now open right under the floating bar.
+- Better wallpaper generator: three looks (soft glows, flowing aurora ribbons, smooth mesh gradient) in matching colour harmonies, with a light vignette and fine grain so there is no colour banding. Used for the desktop and for Brave.
+- Brave: the search widget on the new tab page is now off too (top sites, clock, news, cards and sponsored images were already off).
 - README, welcome message and the Keyboard Shortcuts window (Super+F1) updated.
 
 ### Removed
@@ -19,7 +23,8 @@
 ### Notes
 - Open programs keep running the old version after `updateos` until you restart them, and a new kernel only starts after a reboot.
 - Your current ISO does not have `updateos`, so boot this version normally once. Later updates can use it.
-
+- Brave only shows the generated picture once "Use your own" is picked for the background in Brave's new tab settings (Customize). Pick it once and it stays.
+- 
 ## [1.1.3] - 2026-11-08
 
 ### Added
