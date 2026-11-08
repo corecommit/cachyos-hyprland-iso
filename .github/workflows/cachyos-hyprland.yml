@@ -3098,7 +3098,7 @@ jobs:
           fi
 
           # ----------------------------------------------------------- what gets copied
-          RS=(rsync -aHX --numeric-owner)
+          RS=(rsync -aHX --numeric-ids)
           # Files that belong to THIS running session, never overwritten:
           ETC_EXCL=(
             --exclude=/machine-id --exclude=/hostname --exclude=/localtime --exclude=/resolv.conf
