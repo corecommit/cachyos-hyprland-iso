@@ -395,52 +395,163 @@ jobs:
           mkdir -p "$AIROOT/usr/share/cachyos-hyprland"
           cat > "$AIROOT/usr/share/cachyos-hyprland/genwall.py" <<'PYGEN'
           #!/usr/bin/env python3
-          """Random dark wallpaper made of soft colour glows (pure python, no dependencies).
+          """Random dark wallpaper (pure python, no dependencies).
 
-          usage: genwall.py png  OUT.png    write a wallpaper
+          usage: genwall.py png OUT.png [--style glow|aurora|mesh] [--seed N] [--size WxH]
 
-          The seed is the current time, so every run gives a different picture. The file is
-          written next to its destination and moved over the old one, so the old picture is
-          deleted and only one copy ever exists.
+          Three looks (picked at random unless --style is given):
+            glow    soft coloured light blobs on a dark gradient
+            aurora  flowing ribbons of light
+            mesh    smooth multi-colour gradient, gently warped
+          Colours come from a random colour harmony, so they always go together. A light vignette
+          and fine grain stop colour banding when the picture is scaled up.
+          The seed is the current time unless --seed is given, so every run is different. The file
+          is written next to its destination and moved over the old one: the old picture is deleted
+          and only one copy ever exists.
           """
           import colorsys, math, os, random, struct, sys, time, zlib
 
-          W, H = 384, 216   # small on purpose: fast to make, smooth glows scale up cleanly
+          W, H = 512, 288   # small on purpose: fast to make; smooth pictures scale up cleanly
 
 
-          def render(seed):
-              rnd = random.Random(seed)
+          def hsv(h, s, v):
+              return [255.0 * c for c in colorsys.hsv_to_rgb(h % 1.0, min(1.0, max(0.0, s)), min(1.0, max(0.0, v)))]
+
+
+          def palette(rnd):
+              """(background colour, [accent colours]) from a random colour harmony."""
               hue = rnd.random()
-              base = [255 * c for c in colorsys.hsv_to_rgb(hue, rnd.uniform(0.5, 0.8), rnd.uniform(0.05, 0.10))]
+              offsets = rnd.choice([
+                  (0.0, 0.06, -0.06, 0.12),        # analogous: neighbours
+                  (0.0, 0.5, 0.04, 0.46),          # complementary
+                  (0.0, 0.333, 0.667, 0.05),       # triadic
+                  (0.0, 0.42, 0.58, 0.08),         # split complementary
+              ])
+              bg = hsv(hue, rnd.uniform(0.45, 0.75), rnd.uniform(0.045, 0.09))
+              accents = [hsv(hue + o, rnd.uniform(0.40, 0.80), rnd.uniform(0.60, 0.98)) for o in offsets]
+              rnd.shuffle(accents)
+              return bg, accents
+
+
+          def mix(a, b, t):
+              return [a[i] + (b[i] - a[i]) * t for i in range(3)]
+
+
+          def style_glow(rnd, w, h):
+              bg, accents = palette(rnd)
+              top = mix(bg, accents[0], 0.07)
               blobs = []
-              for i in range(rnd.randint(3, 5)):
-                  h = (hue + rnd.uniform(-0.15, 0.15) + (0.5 if i == 0 and rnd.random() < 0.3 else 0.0)) % 1.0
-                  col = [255 * c for c in colorsys.hsv_to_rgb(h, rnd.uniform(0.45, 0.8), rnd.uniform(0.55, 0.95))]
-                  cx, cy = rnd.uniform(0.1, 0.9), rnd.uniform(0.1, 0.9)
-                  rad = rnd.uniform(0.10, 0.28)
-                  s = rnd.uniform(0.35, 0.8)
-                  k = 2 * rad * rad
-                  ex = [s * math.exp(-(((x / W) - cx) * W / H) ** 2 / k) for x in range(W)]
-                  ey = [math.exp(-((y / H) - cy) ** 2 / k) for y in range(H)]
+              for i in range(rnd.randint(4, 6)):
+                  col = accents[i % len(accents)]
+                  cx, cy = rnd.uniform(0.05, 0.95), rnd.uniform(0.05, 0.95)
+                  rx, ry = rnd.uniform(0.10, 0.30), rnd.uniform(0.10, 0.34)
+                  s = rnd.uniform(0.40, 0.85)
+                  ex = [s * math.exp(-((x / w - cx) * w / h) ** 2 / (2 * rx * rx)) for x in range(w)]
+                  ey = [math.exp(-(y / h - cy) ** 2 / (2 * ry * ry)) for y in range(h)]
                   blobs.append((col, ex, ey))
-              raw = bytearray()
-              for y in range(H):
-                  raw.append(0)
-                  for x in range(W):
+              for y in range(h):
+                  row = []
+                  base = mix(top, bg, y / (h - 1))
+                  for x in range(w):
                       r, g, b = base
                       for col, ex, ey in blobs:
-                          w = ex[x] * ey[y]
-                          r += (col[0] - r) * w
-                          g += (col[1] - g) * w
-                          b += (col[2] - b) * w
-                      raw += bytes((int(r), int(g), int(b)))
+                          k = ex[x] * ey[y]
+                          r += (col[0] - r) * k
+                          g += (col[1] - g) * k
+                          b += (col[2] - b) * k
+                      row.append((r, g, b))
+                  yield row
+
+
+          def style_aurora(rnd, w, h):
+              bg, accents = palette(rnd)
+              ribbons = []
+              for i in range(rnd.randint(3, 4)):
+                  ribbons.append((
+                      accents[i % len(accents)],
+                      rnd.uniform(0.25, 0.75),               # centre line height
+                      rnd.uniform(0.05, 0.14),               # wave size
+                      rnd.uniform(1.0, 2.6), rnd.uniform(0, 6.28),    # wave 1: frequency, phase
+                      rnd.uniform(2.5, 5.0), rnd.uniform(0, 6.28),    # wave 2
+                      rnd.uniform(0.045, 0.10),              # thickness
+                      rnd.uniform(0.5, 1.0),                 # brightness
+                      rnd.uniform(0.8, 2.0), rnd.uniform(0, 6.28),    # slow brightness change along x
+                  ))
+              cols = []
+              for (col, cy, amp, f1, p1, f2, p2, th, br, fb, pb) in ribbons:
+                  centre, bright = [], []
+                  for x in range(w):
+                      t = x / w
+                      centre.append(cy + amp * math.sin(f1 * 6.283 * t + p1) + amp * 0.4 * math.sin(f2 * 6.283 * t + p2))
+                      bright.append(br * (0.55 + 0.45 * math.sin(fb * 6.283 * t + pb)))
+                  cols.append((col, centre, bright, th))
+              for y in range(h):
+                  v = y / h
+                  base = mix(mix(bg, accents[0], 0.05), bg, v)
+                  row = []
+                  for x in range(w):
+                      r, g, b = base
+                      for col, centre, bright, th in cols:
+                          d = (v - centre[x]) / th
+                          if d > 3.2 or d < -3.2:
+                              continue
+                          # sharper on the lower edge, soft glow upwards: like a curtain of light
+                          k = math.exp(-d * d * (0.9 if d > 0 else 0.35)) * bright[x] * 0.8
+                          r += (col[0] - r) * k
+                          g += (col[1] - g) * k
+                          b += (col[2] - b) * k
+                      row.append((r, g, b))
+                  yield row
+
+
+          def style_mesh(rnd, w, h):
+              bg, accents = palette(rnd)
+              corners = [mix(bg, accents[i % len(accents)], rnd.uniform(0.35, 0.75)) for i in range(4)]
+              wa, wb = rnd.uniform(1.0, 2.2), rnd.uniform(1.0, 2.2)
+              pa, pb = rnd.uniform(0, 6.28), rnd.uniform(0, 6.28)
+              amp = rnd.uniform(0.10, 0.22)
+              for y in range(h):
+                  v = y / (h - 1)
+                  row = []
+                  for x in range(w):
+                      u = x / (w - 1)
+                      uu = min(1.0, max(0.0, u + amp * math.sin(wa * 6.283 * v + pa)))
+                      vv = min(1.0, max(0.0, v + amp * math.sin(wb * 6.283 * u + pb)))
+                      uu = uu * uu * (3 - 2 * uu)     # smoothstep: no visible grid lines
+                      vv = vv * vv * (3 - 2 * vv)
+                      top = mix(corners[0], corners[1], uu)
+                      bot = mix(corners[2], corners[3], uu)
+                      c = mix(top, bot, vv)
+                      row.append((c[0] * 0.55, c[1] * 0.55, c[2] * 0.55))   # keep it dark: it is a desktop
+                  yield row
+
+
+          STYLES = {"glow": style_glow, "aurora": style_aurora, "mesh": style_mesh}
+
+
+          def render(seed, style=None, w=W, h=H):
+              rnd = random.Random(seed)
+              name = style if style in STYLES else rnd.choice(sorted(STYLES))
+              grain = [rnd.uniform(-2.6, 2.6) for _ in range(4096)]
+              raw = bytearray()
+              cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+              for y, row in enumerate(STYLES[name](rnd, w, h)):
+                  raw.append(0)
+                  dy = (y - cy) / cy
+                  for x, (r, g, b) in enumerate(row):
+                      dx = (x - cx) / cx
+                      vig = 1.0 - 0.30 * max(0.0, (dx * dx + dy * dy) / 2.0)   # darker towards the corners
+                      n = grain[(x * 31 + y * 17) & 4095]
+                      raw += bytes((min(255, max(0, int(r * vig + n))),
+                                    min(255, max(0, int(g * vig + n))),
+                                    min(255, max(0, int(b * vig + n)))))
 
               def chunk(t, d):
                   c = struct.pack(">I", len(d)) + t + d
                   return c + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
 
               return (b"\x89PNG\r\n\x1a\n"
-                      + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0))
+                      + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
                       + chunk(b"IDAT", zlib.compress(bytes(raw), 6))
                       + chunk(b"IEND", b""))
 
@@ -454,15 +565,34 @@ jobs:
 
 
           def main():
-              if len(sys.argv) != 3 or sys.argv[1] != "png":
+              a = sys.argv[1:]
+              if len(a) < 2 or a[0] != "png":
                   sys.exit(__doc__)
-              write_atomic(sys.argv[2], render(time.time_ns()))
+              out, seed, style, w, h = a[1], time.time_ns(), None, W, H
+              i = 2
+              try:
+                  while i < len(a):
+                      if a[i] == "--seed":
+                          seed = int(a[i + 1])
+                      elif a[i] == "--style" and a[i + 1] in STYLES:
+                          style = a[i + 1]
+                      elif a[i] == "--size":
+                          w, h = (int(n) for n in a[i + 1].lower().split("x"))
+                      else:
+                          raise ValueError(a[i])
+                      i += 2
+              except (ValueError, IndexError):
+                  sys.exit(__doc__)
+              write_atomic(out, render(seed, style, w, h))
 
 
           if __name__ == "__main__":
               main()
           PYGEN
           python3 "$AIROOT/usr/share/cachyos-hyprland/genwall.py" png "$CONF/hypr/wallpaper.png"
+          # Brave: first new-tab picture, so a fresh ISO already has one in its home folder
+          mkdir -p "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
+          python3 "$AIROOT/usr/share/cachyos-hyprland/genwall.py" png "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images/background.png"
 
           cat > "$CONF/hypr/hyprland.lua" <<'HYPRRICE'
           -- cachyos-hyprland rice
@@ -480,6 +610,8 @@ jobs:
           hl.on("hyprland.start", function()
             hl.exec_cmd("systemctl --user start hyprpolkitagent")
             hl.exec_cmd("sh ~/.config/hypr/wallpaper.sh")
+            -- new Brave wallpaper every time a new tab opens
+            hl.exec_cmd("python3 ~/.config/hypr/brave-wall-watch.py")
             hl.exec_cmd("waybar")
             -- workspace buttons: starts after waybar so the first signal cannot hit a half-started bar
             hl.exec_cmd("sh -c 'sleep 3; exec python3 ~/.config/hypr/ws-daemon.py'")
@@ -629,21 +761,24 @@ jobs:
           {
             "layer": "top",
             "position": "top",
-            "height": 30,
-            "spacing": 4,
-            "modules-left": ["group/workspaces", "hyprland/window"],
-            "modules-right": ["tray", "network", "hyprland/language", "backlight", "battery",
-                              "disk", "pulseaudio", "custom/mem", "cpu", "clock"],
+            "height": 34,
+            "spacing": 6,
+            "margin-top": 6,
+            "margin-left": 8,
+            "margin-right": 8,
+            "modules-left": ["disk", "custom/mem", "cpu", "battery"],
+            "modules-center": ["group/workspaces"],
+            "modules-right": ["tray", "hyprland/language", "backlight", "pulseaudio", "network", "clock"],
             "group/workspaces": { "orientation": "inherit", "modules": ["custom/ws1", "custom/ws2", "custom/ws3", "custom/ws4"] },
             "custom/ws1": { "exec": "sh ~/.config/hypr/ws-state.sh 1", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 1" },
             "custom/ws2": { "exec": "sh ~/.config/hypr/ws-state.sh 2", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 2" },
             "custom/ws3": { "exec": "sh ~/.config/hypr/ws-state.sh 3", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 3" },
             "custom/ws4": { "exec": "sh ~/.config/hypr/ws-state.sh 4", "return-type": "json", "interval": "once", "signal": 8, "tooltip": false, "on-click": "sh ~/.config/hypr/ws-go.sh 4" },
-            "hyprland/window": { "format": "{title}", "max-length": 45, "rewrite": { "": " " } },
             "tray": { "spacing": 10, "icon-size": 16 },
             "network": {
-              "format-wifi": "\uf1eb",
-              "format-ethernet": "\uf6ff",
+              "interval": 2,
+              "format-wifi": "\uf1eb {bandwidthTotalBytes}",
+              "format-ethernet": "\uf6ff {bandwidthTotalBytes}",
               "format-disconnected": "\uf071",
               "tooltip-format-wifi": "{essid}\n{ifname}  {ipaddr}\n{signalStrength}%  {frequency} GHz",
               "tooltip-format-ethernet": "{ifname}  {ipaddr}",
@@ -664,7 +799,7 @@ jobs:
             "battery": {
               "format": "<span color='#b4befe'>{icon}</span> {capacity}%",
               "format-charging": "<span color='#b4befe'>\uf0e7</span> {capacity}%",
-              "format-full": "<span color='#b4befe'>\uf240</span> full",
+              "format-full": "<span color='#b4befe'>\uf240</span> {capacity}%",
               "format-icons": ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"],
               "states": { "warning": 25, "critical": 10 },
               "interval": 30
@@ -685,12 +820,12 @@ jobs:
             },
             "custom/mem": {
               "exec": "sh ~/.config/hypr/mem.sh",
+              "return-type": "json",
               "format": "<span color='#b4befe'>\uf538</span> {}",
-              "interval": 5,
-              "tooltip": false
+              "interval": 5
             },
             "cpu": { "format": "<span color='#b4befe'>\uf2db</span> {usage}%", "interval": 3, "tooltip": false },
-            "clock": { "format": "{:%H:%M}", "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt>{calendar}</tt>", "on-click": "sh ~/.config/hypr/clock-click.sh" }
+            "clock": { "format": "{:%H:%M %d-%m-%Y}", "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt>{calendar}</tt>", "on-click": "sh ~/.config/hypr/clock-click.sh" }
           }
           WBCONF
 
@@ -706,6 +841,7 @@ jobs:
           @define-color pink @tertiary;
           @define-color warn #f9e2af;
           @define-color crit @error;
+          @define-color pill alpha(@on_surface, 0.08);
 
           * {
             font-family: monospace, "Font Awesome 6 Free", "WenQuanYi Micro Hei", sans-serif;
@@ -716,36 +852,39 @@ jobs:
             min-height: 0;
           }
 
-          /* Flat, full-width bar: no gaps, no pills. */
+          /* Floating bar: a gap to the top, left and right, rounded corners. */
           window#waybar {
             background: @bg;
             color: @text;
-            border-top: 1px solid @border_dim;
-            border-bottom: 1px solid @border_dim;
+            border: 2px solid alpha(@accent, 0.45);
+            border-radius: 14px;
           }
 
+          .modules-left { padding-left: 4px; }
+          .modules-right { padding-right: 4px; }
+
+          /* Every item is its own rounded pill. */
           #tray, #network, #language, #backlight, #battery, #disk,
-          #pulseaudio, #custom-mem, #cpu, #clock, #window {
-            background: transparent;
-            padding: 0 8px;
-            margin: 0;
+          #pulseaudio, #custom-mem, #cpu, #clock, #workspaces {
+            background: @pill;
+            border-radius: 9px;
+            padding: 0 10px;
+            margin: 4px 0;
           }
 
           #network:hover, #language:hover, #pulseaudio:hover, #clock:hover {
-            background: alpha(@text, 0.08);
+            background: alpha(@text, 0.16);
           }
 
-          /* ── Workspaces 1-4: only the ones in use are shown ── */
+          /* ── Workspaces 1-4 (all four always shown, in the middle) ── */
           #workspaces {
-            margin: 0 4px 0 2px;
-            padding: 0;
+            padding: 0 4px;
           }
           #custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4 {
             min-width: 18px;
             padding: 0 8px;
-            margin: 3px 2px;
-            border-bottom: 2px solid transparent;
-            border-radius: 3px;
+            margin: 3px 1px;
+            border-radius: 7px;
             color: @text_dim;
             background: transparent;
           }
@@ -754,27 +893,13 @@ jobs:
           }
           #custom-ws1.active, #custom-ws2.active, #custom-ws3.active, #custom-ws4.active {
             color: @text;
-            background: alpha(@text, 0.10);
+            background: alpha(@accent, 0.30);
             border-bottom: 2px solid @accent;
           }
-          /* Empty workspaces take no space. Delete this rule to show all four buttons. */
-          #custom-ws1.empty, #custom-ws2.empty, #custom-ws3.empty, #custom-ws4.empty {
-            min-width: 0;
-            padding: 0;
-            margin: 0;
-            border: none;
-            font-size: 0;
-            background: transparent;
+          #custom-ws1:hover, #custom-ws2:hover, #custom-ws3:hover, #custom-ws4:hover {
+            background: alpha(@text, 0.12);
           }
 
-          /* ── Window title and clock ── */
-          #window {
-            color: @pink;
-            font-weight: 400;
-          }
-          window#waybar.empty #window {
-            padding: 0;
-          }
           #clock {
             color: @pink;
             font-weight: 700;
@@ -792,7 +917,7 @@ jobs:
           # which drops it down under the button. Also in the palette ("System: Power menu").
           # Same wofi path as the palette (default style, no custom markup/stylesheet).
           if [ "${1:-}" = bar ]; then
-            set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 34)
+            set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 46)
             place="--location top_left --xoffset $1 --yoffset $2"
           else
             place=""
@@ -1139,7 +1264,7 @@ jobs:
           # popup-pos.sh WIDTH [TOP] -> prints "X Y": where a popup of WIDTH px must go so it sits
           # centred under the mouse pointer (the bar button that was just clicked), TOP px from the
           # top of the monitor and kept on screen. Falls back to "100 TOP".
-          python3 - "${1:-300}" "${2:-34}" <<'PY' 2>/dev/null || echo "100 ${2:-34}"
+          python3 - "${1:-300}" "${2:-46}" <<'PY' 2>/dev/null || echo "100 ${2:-46}"
           import json, subprocess, sys
           w, top = int(sys.argv[1]), int(sys.argv[2])
           def hc(cmd):
@@ -1165,7 +1290,7 @@ jobs:
           #!/bin/sh
           # Language dropdown (click the layout in the bar). The order must match kb_layout
           # ("us,de,fr,es") in hyprland.lua. Super+Alt+Space still cycles (kb-switch.sh).
-          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 34)
+          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 46)
           choice=$(printf '%s\n' "us  English (US)" "de  Deutsch" "fr  Français" "es  Español" \
             | wofi --dmenu --hide-search --insensitive --cache-file /dev/null --prompt Language \
                 --width 220 --height 200 --location top_left --xoffset "$1" --yoffset "$2")
@@ -1204,7 +1329,7 @@ jobs:
           # map to the zone that normally has that offset.
           notify() { command -v notify-send >/dev/null 2>&1 && notify-send -t 4000 "$@"; return 0; }
 
-          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 320 34)
+          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 320 46)
           raw=$(printf '' | wofi --dmenu --exec-search --cache-file /dev/null --prompt "UTC offset, e.g. 5:30" \
             --width 320 --height 100 --location top_left --xoffset "$1" --yoffset "$2") || exit 0
           raw=$(printf '%s' "$raw" | tr -d '[:space:]')
@@ -1317,17 +1442,19 @@ jobs:
           rm -f "$HOME"/.config/hypr/wallpaper-custom.*
           pkill -x swaybg 2>/dev/null
           setsid -f swaybg -i "$W" -m fill >/dev/null 2>&1
+          # Brave gets a new picture too (new tab page)
+          sh "$HOME/.config/hypr/brave-wall.sh"
           exit 0
           WALLSH
 
           cat > "$CONF/hypr/mem.sh" <<'MEMSH'
           #!/bin/sh
-          # Bar memory text: "963 MiB / 30.96 GiB" (used / total; used = total - available).
+          # Bar memory item (JSON): text "89%" (used share), tooltip "963 MiB / 30.96 GiB". used = total - available.
           awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 }
             END {
               u = t - a
               if (u < 1048576) us = sprintf("%d MiB", u / 1024); else us = sprintf("%.2f GiB", u / 1048576)
-              printf "%s / %.2f GiB\n", us, t / 1048576
+              printf "{\"text\":\"%d%%\",\"tooltip\":\"%s / %.2f GiB\"}\n", (t > 0 ? u * 100 / t : 0), us, t / 1048576
             }' /proc/meminfo
           MEMSH
 
@@ -1478,7 +1605,8 @@ jobs:
                 "show_together": false,
                 "show_brave_talk": false,
                 "show_brave_news": false,
-                "show_top_sites": false
+                "show_top_sites": false,
+                "show_search_widget": false
               },
               "brave_news": { "opted_in": false, "show_on_ntp": false },
               "today": { "should_show_toolbar_button": false }
@@ -1486,23 +1614,89 @@ jobs:
           }
           BRAVEPREFS
 
-          # ---- Brave: new random wallpaper every time Brave is opened ----
+          # ---- Brave: a new random wallpaper for every new tab ----
+          # brave-wall.sh makes one picture with genwall.py and puts it in Brave's
+          # sanitized_background_images folder (replacing the old one, so only one exists).
+          # It runs at login, on Super+Shift+W, when Brave starts, and (brave-wall-watch.py) every
+          # time Brave opens the picture for a new tab, so the next new tab shows a fresh one.
+          cat > "$CONF/hypr/brave-wall.sh" <<'BRAVEWALLSH'
+          #!/bin/sh
+          # New random picture for Brave's new tab page. Replaces every picture in the folder.
+          D="$HOME/.config/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
+          GEN=/usr/share/cachyos-hyprland/genwall.py
+          mkdir -p "$D"
+          found=0
+          for f in "$D"/*; do
+            [ -f "$f" ] || continue
+            case "$f" in *.tmp) rm -f "$f"; continue ;; esac
+            found=1
+            python3 "$GEN" png "$f" 2>/dev/null   # written to .tmp, then moved over the old file
+          done
+          [ "$found" = 1 ] || python3 "$GEN" png "$D/background.png" 2>/dev/null
+          exit 0
+          BRAVEWALLSH
+
+          cat > "$CONF/hypr/brave-wall-watch.py" <<'BRAVEWATCH'
+          #!/usr/bin/env python3
+          """Make a new Brave wallpaper every time a new tab opens.
+
+          Brave opens the picture in sanitized_background_images each time it shows a new tab page.
+          This watches that folder (inotify) and, after each open, swaps the picture for a new random
+          one with brave-wall.sh, so the next new tab looks different. The old picture is replaced.
+          """
+          import ctypes, ctypes.util, os, struct, subprocess, time
+
+          D = os.path.expanduser("~/.config/BraveSoftware/Brave-Browser/Default/sanitized_background_images")
+          SCRIPT = os.path.expanduser("~/.config/hypr/brave-wall.sh")
+          IN_OPEN = 0x20
+          EVT = struct.Struct("iIII")
+
+
+          def main():
+              libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+              fd = libc.inotify_init()
+              if fd < 0:
+                  return
+              wd = -1
+              while True:
+                  if wd < 0:
+                      if os.path.isdir(D):
+                          wd = libc.inotify_add_watch(fd, D.encode(), IN_OPEN)
+                      if wd < 0:
+                          time.sleep(5)
+                          continue
+                  data = os.read(fd, 4096)
+                  i, new_tab = 0, False
+                  while i + EVT.size <= len(data):
+                      _, _, _, ln = EVT.unpack_from(data, i)
+                      name = data[i + EVT.size:i + EVT.size + ln].split(b"\0", 1)[0]
+                      i += EVT.size + ln
+                      if name and not name.endswith(b".tmp"):
+                          new_tab = True
+                  if new_tab:
+                      time.sleep(1.0)                      # let Brave finish reading the current picture
+                      subprocess.run(["sh", SCRIPT], check=False)
+                      time.sleep(0.5)
+                      # drop the opens caused by Brave noticing the new file, so one tab = one picture
+                      os.set_blocking(fd, False)
+                      try:
+                          while os.read(fd, 4096):
+                              pass
+                      except BlockingIOError:
+                          pass
+                      os.set_blocking(fd, True)
+
+
+          if __name__ == "__main__":
+              main()
+          BRAVEWATCH
+
           mkdir -p "$AIROOT/usr/local/bin"
           cat > "$AIROOT/usr/local/bin/brave" <<'BRAVEWRAP'
           #!/bin/sh
-          # Regenerate Brave's custom wallpaper (new random picture, old one replaced),
-          # then start the real Brave. Skipped if Brave is already running.
-          D="$HOME/.config/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
-          GEN=/usr/share/cachyos-hyprland/genwall.py
+          # Make a fresh Brave wallpaper, then start the real Brave. Skipped if Brave is already running.
           if ! pgrep -x brave >/dev/null 2>&1; then
-            mkdir -p "$D"
-            found=0
-            for f in "$D"/*; do
-              [ -f "$f" ] || continue
-              found=1
-              python3 "$GEN" png "$f" 2>/dev/null   # atomic: written to .tmp, then moved over the old file
-            done
-            [ "$found" = 1 ] || python3 "$GEN" png "$D/background.png" 2>/dev/null
+            sh "$HOME/.config/hypr/brave-wall.sh"
           fi
           exec /usr/bin/brave "$@"
           BRAVEWRAP
@@ -2325,6 +2519,30 @@ jobs:
           HOME_DIR=${HOME_DIR:-/home/$LIVE_USER}
           ISO_VERSION=$(sed -n 's/^VERSION="\(.*\)"/\1/p' /etc/cachyos-hyprland-release 2>/dev/null)
 
+          usage() {
+            cat <<'USAGE'
+          Usage: save-progress [OPTION]
+
+          Save your files onto the USB stick you booted from, so they are back next time.
+
+          Options:
+            (none)         save now
+            --restore      bring the saved files back (runs by itself at boot)
+            -h, --help     show this help
+
+          What is saved: your home folder (files over 10 MB and caches are skipped, and the
+          skipped files are listed), saved Wi-Fi networks and the timezone.
+          It works with a raw/DD USB (a small CPSAVE partition is made after the ISO) and with
+          Ventoy / Rufus ISO mode / any normal stick (a cachyos-hyprland-save folder is used).
+          Run it again any time: the new save replaces the old one.
+          USAGE
+          }
+          case "${1:-}" in
+            -h|--help|help) usage; exit 0 ;;
+            ""|--restore) ;;
+            *) printf 'save-progress: unknown option: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+          esac
+
           [ "$(id -u)" -eq 0 ] || exec sudo -- "$(readlink -f "$0")" "$@"
 
           say() { printf '%s\n' "$*"; }
@@ -2655,7 +2873,7 @@ jobs:
           mkdir -p "$AIROOT/usr/local/bin"
           cat > "$AIROOT/usr/local/bin/updateos" <<'UPDATEUSB'
           #!/bin/bash
-          # updateos [--yes] [ISO-FILE | DEVICE | FOLDER]
+          # updateos [--yes] [--help] [ISO-FILE | DEVICE | FOLDER]
           #
           # Update this running OS to a newer version WITHOUT rebooting. Plug in a USB that has
           # the new version (flashed with the new ISO, or a normal USB with the .iso file on it).
@@ -2677,12 +2895,38 @@ jobs:
           ASSUME_YES=0
           SRC_ARG=""
 
+          usage() {
+            cat <<'USAGE'
+          Usage: updateos [OPTIONS] [ISO-FILE | DEVICE | FOLDER]
+
+          Update this running system to a newer version without rebooting. Plug in a USB that
+          has the new version (flashed with the new ISO, or a normal USB with the .iso file on
+          it), then run updateos. With no source it looks for one on the plugged-in USBs.
+
+          Options:
+            -y, --yes      do not ask for confirmation
+            -h, --help     show this help
+
+          Kept: your files, saved Wi-Fi networks, timezone, wallpaper and colours.
+          Refreshed from the new version: bar, keybinds, launcher, notifications, terminal
+          (your old copies are backed up in ~/.local/share/update-backup/).
+          Programs that are already open keep running the old version until you restart them.
+          A new kernel only starts after a reboot.
+          USAGE
+          }
+
+          for a in "$@"; do
+            case "$a" in
+              -h|--help) usage; exit 0 ;;
+            esac
+          done
+
           [ "$(id -u)" -eq 0 ] || exec sudo -- "$(readlink -f "$0")" "$@"
 
           for a in "$@"; do
             case "$a" in
               -y|--yes) ASSUME_YES=1 ;;
-              -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+              -*) printf 'updateos: unknown option: %s\n\n' "$a" >&2; usage >&2; exit 2 ;;
               *) SRC_ARG="$a" ;;
             esac
           done
@@ -3107,12 +3351,12 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/ws-daemon.py usr/share/cachyos-hyprland/genwall.py etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/ws-daemon.py etc/skel/.config/hypr/brave-wall.sh etc/skel/.config/hypr/brave-wall-watch.py usr/share/cachyos-hyprland/genwall.py etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
           [ -s cachyos/archiso/README.txt ] \
             || { echo "VERIFY FAIL: missing/empty archiso/README.txt" >&2; fail=1; }
-          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh popup-pos.sh kb-menu.sh clock-click.sh tz-prompt.sh wifi.sh volume.sh launcher.sh theme.sh wallpaper.sh ws-state.sh ws-go.sh mem.sh; do
+          for sh_file in palette.sh screenshot.sh power.sh tz-setup.sh kb-switch.sh cheatsheet.sh first-run.sh popup-pos.sh kb-menu.sh clock-click.sh tz-prompt.sh wifi.sh volume.sh launcher.sh theme.sh wallpaper.sh ws-state.sh ws-go.sh mem.sh brave-wall.sh; do
             if ! sh -n "cachyos/archiso/airootfs/etc/skel/.config/hypr/$sh_file"; then
               echo "VERIFY FAIL: $sh_file has a shell syntax error" >&2; fail=1
             fi
@@ -3142,6 +3386,9 @@ jobs:
           if grep -q 'for i = 1, 9' "$R/hypr/hyprland.lua" || ! grep -q 'for i = 1, 4 do' "$R/hypr/hyprland.lua"; then
             echo "VERIFY FAIL: workspace binds must cover 1-4 only" >&2; fail=1
           fi
+          if grep -q 'modules-center.*group/workspaces' "$R/waybar/config.jsonc" && ! grep -q 'ws4' "$R/waybar/style.css"; then
+            echo "VERIFY FAIL: waybar style has no rule for workspace 4" >&2; fail=1
+          fi
           if grep -q 'hyprland/workspaces' "$R/waybar/config.jsonc"; then
             echo "VERIFY FAIL: waybar must use the custom 1-2-3 buttons, not hyprland/workspaces" >&2; fail=1
           fi
@@ -3154,7 +3401,7 @@ jobs:
           for j in "$R/BraveSoftware/Brave-Browser/Default/Preferences"; do
             python3 -m json.tool "$j" >/dev/null || { echo "VERIFY FAIL: $j is not valid JSON" >&2; fail=1; }
           done
-          for py in "$R/hypr/ws-daemon.py" cachyos/archiso/airootfs/usr/share/cachyos-hyprland/genwall.py; do
+          for py in "$R/hypr/ws-daemon.py" "$R/hypr/brave-wall-watch.py" cachyos/archiso/airootfs/usr/share/cachyos-hyprland/genwall.py; do
             python3 -m py_compile "$py" || { echo "VERIFY FAIL: $py has a Python syntax error" >&2; fail=1; }
           done
           if grep -rq 'brave-launch\|cachyos-wall' cachyos/archiso/airootfs/etc cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
