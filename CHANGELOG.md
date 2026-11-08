@@ -10,8 +10,9 @@
 - `rsync` is now included (needed by `updateos`).
 
 ### Changed
-- New top bar: floating, with a small gap to the top, left and right and rounded corners. Every item is its own rounded pill. Left side: disk usage, memory (percent, hover for used / total), CPU and battery. Middle: all 4 workspace buttons (the active one is highlighted). Right side: tray, keyboard layout and brightness (only when relevant), volume, Wi-Fi with live network speed, and the clock with the date. The window title is no longer in the bar.
+- New top bar, made to match the reference screenshot: a flat dark bar (`#282828`) with a steel-blue frame, a small gap to the top, left and right and slightly rounded corners. Every item is a small rounded pill (`#413d3a`) with gold text and icons. Left side: disk usage, memory (percent, hover for used / total), CPU and battery. Middle: all 4 workspace buttons (the active one is filled gold). Right side: tray, keyboard layout and brightness (only when relevant), volume, Wi-Fi with live network speed, and the clock with the date. The window title is no longer in the bar.
 - 4 workspaces instead of 3. Super+1 to 4, Super+Shift+1 to 4, Super+, / Super+. and Super+scroll cycle through all of them. All four are always shown in the bar.
+- New colours for the whole system: primary is now gold `#c7ab7a` (was lavender `#b4befe`) and secondary is steel blue `#819299` (was pink `#f5a6d7`). They are used for the bar, window borders (active = steel blue), lock screen, notifications, the app launcher and terminal cursor/selection. Backgrounds are now `#1d1d1d` (base), `#282828` (bar) and `#413d3a` (pills). Super+P (wallpaper colours) still replaces them with colours from the picture.
 - The volume, language and timezone popups now open right under the floating bar.
 - Better wallpaper generator: three looks (soft glows, flowing aurora ribbons, smooth mesh gradient) in matching colour harmonies, with a light vignette and fine grain so there is no colour banding. Used for the desktop and for Brave.
 - Brave: the search widget on the new tab page is now off too (top sites, clock, news, cards and sponsored images were already off).
@@ -19,6 +20,9 @@
 
 ### Removed
 - The launcher, power and idle buttons from the top bar. Super+Space, Super+X and the command palette (Super+Shift+Space) still work.
+
+### Fixed
+- `updateos` stopped with `rsync: --numeric-owner: unknown option` and copied no system files. It now uses the correct `--numeric-ids`.
 
 ### Notes
 - Open programs keep running the old version after `updateos` until you restart them, and a new kernel only starts after a reboot.
