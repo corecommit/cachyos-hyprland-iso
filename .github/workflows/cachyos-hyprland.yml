@@ -1289,22 +1289,19 @@ jobs:
 
           cat > "$CONF/hypr/kb-menu.sh" <<'KBMENU'
           #!/bin/sh
-          # Language dropdown (click the layout in the bar). The order must match kb_layout
-          # ("us,de,fr,es") in hyprland.lua. Super+Alt+Space still cycles (kb-switch.sh).
-          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 46)
+          # Language dropdown. Order must match kb_layout ("us,de,fr,es").
           choice=$(printf '%s\n' "us  English (US)" "de  Deutsch" "fr  Français" "es  Español" \
-            | wofi --dmenu --hide-search --insensitive --cache-file /dev/null --prompt Language \
-                --width 220 --height 200 --location top_left --xoffset "$1" --yoffset "$2")
+            | wofi --dmenu --normal-window)
           [ -n "$choice" ] || exit 0
           case "$choice" in
             us*) idx=0 ;;
             de*) idx=1 ;;
             fr*) idx=2 ;;
             es*) idx=3 ;;
-            *) exit 0 ;;
+            *)   exit 0 ;;
           esac
-          hyprctl switchxkblayout all "$idx" >/dev/null
-          command -v notify-send >/dev/null 2>&1 && notify-send -t 2000 "Keyboard: ${choice#??  }"
+          hyprctl switchxkblayout all "$idx"
+          notify-send -t 2000 "Keyboard: ${choice#??  }"
           exit 0
           KBMENU
 
