@@ -1093,6 +1093,7 @@ jobs:
             "Hyprland: Show keybinds" \
             "Hyprland: Restart waybar" \
             "System: System info" \
+            "System: Change Keyboard Layout" \
             "System: Wallpaper theme (matugen)" \
             "System: Power menu" \
             "System: Lock screen" \
@@ -1181,6 +1182,7 @@ jobs:
             "Hyprland: Show keybinds") term less "$HOME/.config/hypr/hyprland.lua" ;;
             "Hyprland: Restart waybar") pkill -x waybar; sleep 0.3; exec waybar ;;
             "System: System info") term sh -c 'fastfetch; echo; read -r _' ;;
+            "System: Change Keyboard Layout") exec sh "$HOME/.config/hypr/kb-menu.sh" ;;
             "System: Wallpaper theme (matugen)") exec sh "$HOME/.config/hypr/theme.sh" ;;
             "System: Power menu") exec sh "$HOME/.config/hypr/power.sh" ;;
             "System: Lock screen") exec hyprlock ;;
