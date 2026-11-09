@@ -780,9 +780,9 @@ jobs:
               "format-wifi": "\uf1eb {bandwidthTotalBytes}",
               "format-ethernet": "\uf6ff {bandwidthTotalBytes}",
               "format-disconnected": "\uf071",
-              "tooltip-format-wifi": "{essid}\n{ifname}  {ipaddr}\n{signalStrength}%  {frequency} GHz",
-              "tooltip-format-ethernet": "{ifname}  {ipaddr}",
-              "tooltip-format-disconnected": "Not connected",
+              "tooltip-format-wifi": "<tt><span color='#c7ab7a'><b>\uf1eb  {essid}</b></span>\n<span color='#514947'>──────────────────────</span>\n<span color='#ab9c88'>Signal </span> {signalStrength}%  ({signaldBm} dBm)\n<span color='#ab9c88'>Band   </span> {frequency} GHz\n<span color='#ab9c88'>IP     </span> {ipaddr}\n<span color='#ab9c88'>Gateway</span> {gwaddr}\n<span color='#ab9c88'>Iface  </span> {ifname}\n<span color='#514947'>──────────────────────</span>\n<span color='#ded8be'>↓ {bandwidthDownBytes}</span>   <span color='#ded8be'>↑ {bandwidthUpBytes}</span></tt>",
+              "tooltip-format-ethernet": "<tt><span color='#c7ab7a'><b>\uf6ff  Ethernet</b></span>\n<span color='#514947'>──────────────────────</span>\n<span color='#ab9c88'>IP     </span> {ipaddr}\n<span color='#ab9c88'>Gateway</span> {gwaddr}\n<span color='#ab9c88'>Iface  </span> {ifname}\n<span color='#514947'>──────────────────────</span>\n<span color='#ded8be'>↓ {bandwidthDownBytes}</span>   <span color='#ded8be'>↑ {bandwidthUpBytes}</span></tt>",
+              "tooltip-format-disconnected": "<tt><span color='#c7ab7a'><b>\uf071  Not connected</b></span></tt>",
               "on-click": "sh ~/.config/hypr/wifi.sh"
             },
             "hyprland/language": {
@@ -808,6 +808,9 @@ jobs:
               "format": "<span color='#c7ab7a'>{icon}</span> {volume}%",
               "format-muted": "<span color='#c7ab7a'>\uf6a9</span> muted",
               "format-icons": { "default": ["\uf026", "\uf027", "\uf028"] },
+              "format-source": "{volume}%",
+              "format-source-muted": "muted",
+              "tooltip-format": "<tt><span color='#c7ab7a'><b>\uf028  Audio</b></span>\n<span color='#514947'>──────────────────────</span>\n<span color='#ab9c88'>Output </span> {desc}\n<span color='#ab9c88'>Volume </span> {volume}%\n<span color='#ab9c88'>Mic    </span> {format_source}\n<span color='#514947'>──────────────────────</span>\n<span color='#ded8be'><small>scroll: volume   right-click: mute</small></span></tt>",
               "on-click": "sh ~/.config/hypr/volume.sh",
               "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
               "scroll-step": 2
@@ -819,7 +822,29 @@ jobs:
               "interval": 5
             },
             "cpu": { "format": "<span color='#c7ab7a'>\uf2db</span> {usage}%", "interval": 3, "tooltip": false },
-            "clock": { "format": "\uf017 {:%H:%M %d-%m-%Y}", "tooltip-format": "<big>{:%A, %d %B %Y}</big>\n<tt>{calendar}</tt>", "on-click": "sh ~/.config/hypr/clock-click.sh" }
+            "clock": {
+                "format": "{:%H:%M}",
+                "format-alt": "{:%a, %-d %b  %H:%M}",
+                "tooltip-format": "<tt>{calendar}</tt>",
+                "calendar": {
+                    "mode": "month",
+                    "weeks-pos": "left",
+                    "on-scroll": 1,
+                    "format": {
+                        "months":   "<span color='#89b4fa'><b>{}</b></span>",
+                        "weeks":    "<span color='#6c7086'><small>W{:%V}</small></span>",
+                        "weekdays": "<span color='#f9e2af'><b>{}</b></span>",
+                        "days":     "<span color='#cdd6f4'>{}</span>",
+                        "today":    "<span color='#f38ba8'><b><u>{}</u></b></span>"
+                    }
+                },
+                "actions": {
+                    "on-click-right": "mode",
+                    "on-click-middle": "shift_reset",
+                    "on-scroll-up": "shift_up",
+                    "on-scroll-down": "shift_down"
+                }
+            }
           }
           WBCONF
 
@@ -833,6 +858,7 @@ jobs:
           @define-color frame @secondary;
           @define-color warn #c7ab7a;
           @define-color crit @error;
+          tooltip label { font-family: "JetBrainsMono Nerd Font", monospace; }
 
           * {
             font-family: monospace, "Font Awesome 6 Free", "WenQuanYi Micro Hei", sans-serif;
@@ -948,7 +974,7 @@ jobs:
           hide_scroll=true
           no_actions=true
           gtk_dark=true
-          width=400
+          width=650
           height=450
           WOFICONF
           cat > "$CONF/wofi/style.css" <<'WOFICSS'
@@ -1323,83 +1349,148 @@ jobs:
 
           cat > "$CONF/hypr/tz-prompt.sh" <<'TZPROMPT'
           #!/bin/sh
-          # Text bar under the clock: type a UTC offset ("5:30", "5", "-8", "+3") or a zone name
-          # ("Asia/Kolkata") and press Enter. Esc cancels.
-          # Whole-hour offsets use fixed Etc/GMT zones (no daylight saving); the :30/:45 offsets
-          # map to the zone that normally has that offset.
+          # Timezone picker under the clock. Type to filter the list, Enter to apply, Esc to cancel.
           notify() { command -v notify-send >/dev/null 2>&1 && notify-send -t 4000 "$@"; return 0; }
 
-          set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 320 46)
-          raw=$(printf '' | wofi --dmenu --exec-search --cache-file /dev/null --prompt "UTC offset, e.g. 5:30" \
-            --width 320 --height 100 --location top_left --xoffset "$1" --yoffset "$2") || exit 0
-          raw=$(printf '%s' "$raw" | tr -d '[:space:]')
-          [ -n "$raw" ] || exit 0
-          case "$raw" in
-            *..*) notify "Invalid timezone" "$raw"; exit 1 ;;
-          esac
+          W=650; H=400
+          pos=$(sh "$HOME/.config/hypr/popup-pos.sh" "$W" "$H" 2>/dev/null)
+          set -- $pos
+          X=${1:-20}; Y=${2:-46}
+
+          wofi_pick() { # $1 = prompt, $2 = height, optional extra flags after
+            p=$1; h=$2; shift 2
+            wofi --dmenu --insensitive --cache-file /dev/null --hide-scroll --prompt "$p" \
+              --width "$W" --height "$h" --location center "$@"
+          }
+
+          ZONES="Pacific/Midway|Midway
+          Pacific/Honolulu|Honolulu, Hawaii
+          America/Anchorage|Anchorage, Alaska
+          America/Los_Angeles|Los Angeles, Vancouver
+          America/Denver|Denver, Calgary
+          America/Phoenix|Phoenix
+          America/Chicago|Chicago, Dallas
+          America/Mexico_City|Mexico City
+          America/New_York|New York, Toronto
+          America/Bogota|Bogota, Lima
+          America/Caracas|Caracas
+          America/Halifax|Halifax
+          America/St_Johns|St. John's, Newfoundland
+          America/Sao_Paulo|Sao Paulo, Brazil
+          America/Argentina/Buenos_Aires|Buenos Aires
+          Atlantic/Azores|Azores
+          Atlantic/Reykjavik|Reykjavik
+          UTC|UTC
+          Europe/London|London, Dublin
+          Europe/Lisbon|Lisbon
+          Europe/Paris|Paris, Berlin, Madrid, Rome
+          Africa/Lagos|Lagos
+          Africa/Cairo|Cairo
+          Africa/Johannesburg|Johannesburg
+          Europe/Athens|Athens, Helsinki, Kyiv
+          Europe/Istanbul|Istanbul
+          Europe/Moscow|Moscow
+          Africa/Nairobi|Nairobi
+          Asia/Riyadh|Riyadh, Baghdad
+          Asia/Tehran|Tehran
+          Asia/Dubai|Dubai, Abu Dhabi
+          Asia/Kabul|Kabul
+          Asia/Karachi|Karachi, Tashkent
+          Asia/Kolkata|Kolkata, Mumbai, Delhi
+          Asia/Kathmandu|Kathmandu
+          Asia/Dhaka|Dhaka
+          Asia/Yangon|Yangon
+          Asia/Bangkok|Bangkok, Jakarta, Hanoi
+          Asia/Shanghai|Beijing, Shanghai
+          Asia/Singapore|Singapore, Kuala Lumpur
+          Asia/Hong_Kong|Hong Kong
+          Asia/Manila|Manila
+          Australia/Perth|Perth
+          Asia/Tokyo|Tokyo
+          Asia/Seoul|Seoul
+          Australia/Darwin|Darwin
+          Australia/Adelaide|Adelaide
+          Australia/Brisbane|Brisbane
+          Australia/Sydney|Sydney, Melbourne
+          Pacific/Noumea|Noumea
+          Pacific/Auckland|Auckland, Wellington
+          Pacific/Fiji|Fiji
+          Pacific/Tongatapu|Tonga
+          Pacific/Kiritimati|Kiritimati"
+
+          list=$(printf '%s\n' "$ZONES" | while IFS='|' read -r z label; do
+            [ -f "/usr/share/zoneinfo/$z" ] || continue
+            off=$(TZ=$z date +%z)
+            printf '%s|UTC%s:%s   %s   %s  (%s)\n' "$off" "${off%??}" "${off#???}" \
+              "$(TZ=$z date +%H:%M)" "$label" "$z"
+          done | sort -t'|' -k1,1n -s | cut -d'|' -f2-)
+
+          choice=$(printf 'Custom offset…\n%s\n' "$list" | wofi_pick "Timezone" "$H") || exit 0
+          [ -n "$choice" ] || exit 0
 
           zone=""
-          if [ -f "/usr/share/zoneinfo/$raw" ]; then
-            zone="$raw"
-          else
-            o=${raw#[Uu][Tt][Cc]}
-            o=${o#[Gg][Mm][Tt]}
-            sign=+
-            case "$o" in
-              -*) sign=-; o=${o#-} ;;
-              +*) o=${o#+} ;;
-            esac
-            h=${o%%:*}
-            m=00
-            case "$o" in *:*) m=${o#*:} ;; esac
-            case "$h$m" in
-              ''|*[!0-9]*) notify "Invalid timezone" "Use an offset like 5:30, 5 or -8, or a name like Asia/Kolkata"; exit 1 ;;
-            esac
-            h=$(printf '%s' "$h" | sed 's/^0*//'); h=${h:-0}
-            m=$(printf '%s' "$m" | sed 's/^0*//'); m=${m:-0}
-            limit=14
-            [ "$sign" = - ] && limit=12
-            if [ "$h" -gt "$limit" ]; then
-              notify "Invalid timezone" "UTC offsets go from -12 to +14"; exit 1
-            fi
-            case "$m" in
-              0)
-                if [ "$h" -eq 0 ]; then
-                  zone=Etc/UTC
-                elif [ "$sign" = + ]; then
-                  zone="Etc/GMT-$h"
-                else
-                  zone="Etc/GMT+$h"
-                fi
-                ;;
-              30|45)
-                case "$sign$h:$m" in
-                  +3:30) zone=Asia/Tehran ;;
-                  +4:30) zone=Asia/Kabul ;;
-                  +5:30) zone=Asia/Kolkata ;;
-                  +5:45) zone=Asia/Kathmandu ;;
-                  +6:30) zone=Asia/Yangon ;;
-                  +8:45) zone=Australia/Eucla ;;
-                  +9:30) zone=Australia/Darwin ;;
-                  +10:30) zone=Australia/Lord_Howe ;;
-                  +12:45) zone=Pacific/Chatham ;;
-                  -3:30) zone=America/St_Johns ;;
-                  -9:30) zone=Pacific/Marquesas ;;
+          case "$choice" in
+            "Custom offset…")
+              raw=$(printf '' | wofi_pick "UTC offset, e.g. 5:30" 100 --exec-search) || exit 0
+              raw=$(printf '%s' "$raw" | tr -d '[:space:]')
+              [ -n "$raw" ] || exit 0
+              case "$raw" in *..*) notify "Invalid timezone" "$raw"; exit 1 ;; esac
+
+              case "$raw" in
+                */*|UTC) [ -f "/usr/share/zoneinfo/$raw" ] && zone="$raw" ;;
+              esac
+
+              if [ -z "$zone" ]; then
+                o=${raw#[Uu][Tt][Cc]}; o=${o#[Gg][Mm][Tt]}
+                sign=+
+                case "$o" in -*) sign=-; o=${o#-} ;; +*) o=${o#+} ;; esac
+                case "$o" in
+                  *.5)  o="${o%.5}:30" ;;
+                  *.75) o="${o%.75}:45" ;;
                 esac
-                ;;
-            esac
-          fi
+                h=${o%%:*}; m=00
+                case "$o" in *:*) m=${o#*:} ;; esac
+                case "$h$m" in
+                  ''|*[!0-9]*) notify "Invalid timezone" "Use 5:30, 5, -8 or a name like Asia/Kolkata"; exit 1 ;;
+                esac
+                [ -n "$h" ] || { notify "Invalid timezone" "Missing hour"; exit 1; }
+                h=$(printf '%s' "$h" | sed 's/^0*//'); h=${h:-0}
+                m=$(printf '%s' "$m" | sed 's/^0*//'); m=${m:-0}
+                limit=14; [ "$sign" = - ] && limit=12
+                [ "$h" -le "$limit" ] || { notify "Invalid timezone" "Offsets go from -12 to +14"; exit 1; }
+                case "$m" in
+                  0) if [ "$h" -eq 0 ]; then zone=Etc/UTC
+                    elif [ "$sign" = + ]; then zone="Etc/GMT-$h"
+                    else zone="Etc/GMT+$h"; fi ;;
+                  30|45)
+                    case "$sign$h:$m" in
+                      +3:30) zone=Asia/Tehran ;;      +4:30) zone=Asia/Kabul ;;
+                      +5:30) zone=Asia/Kolkata ;;     +5:45) zone=Asia/Kathmandu ;;
+                      +6:30) zone=Asia/Yangon ;;      +8:45) zone=Australia/Eucla ;;
+                      +9:30) zone=Australia/Darwin ;; +10:30) zone=Australia/Lord_Howe ;;
+                      +12:45) zone=Pacific/Chatham ;; -3:30) zone=America/St_Johns ;;
+                      -9:30) zone=Pacific/Marquesas ;;
+                    esac ;;
+                esac
+              fi ;;
+            *)
+              zone=$(printf '%s' "$choice" | sed -n 's/.*(\([^()]*\))[[:space:]]*$/\1/p') ;;
+          esac
+
           if [ -z "$zone" ] || [ ! -f "/usr/share/zoneinfo/$zone" ]; then
-            notify "No timezone for that offset" "Try a zone name such as Asia/Kolkata"
+            notify "No timezone for that input" "Pick one from the list or try Asia/Kolkata"
             exit 1
           fi
-          if sudo -n timedatectl set-timezone "$zone" 2>/dev/null || timedatectl set-timezone "$zone" 2>/dev/null; then
+
+          err=$(sudo -n timedatectl set-timezone "$zone" 2>&1) \
+            || err=$(timedatectl set-timezone "$zone" 2>&1) \
+            || err=$(pkexec timedatectl set-timezone "$zone" 2>&1)
+          if [ $? -eq 0 ]; then
             touch "$HOME/.config/hypr/.tz-set-done"
             notify "Timezone set" "$zone"
-            # restart the bar (detached) so the clock picks the new zone up
-            setsid -f sh -c 'sleep 0.3; pkill -x waybar; sleep 0.3; exec waybar' >/dev/null 2>&1
+            setsid -f sh -c 'pkill -x waybar; while pgrep -x waybar >/dev/null; do sleep 0.1; done; exec waybar' >/dev/null 2>&1
           else
-            notify "Could not set timezone" "$zone"
+            notify "Could not set timezone" "${err:-$zone}"
           fi
           TZPROMPT
 
@@ -2510,7 +2601,7 @@ jobs:
           ARCHIVE="progress.tar.zst"
           VERSION_FILE="progress.version"
           WIFI_ARCHIVE="wifi.tar.zst"                 # saved Wi-Fi networks (NetworkManager files)
-          TZ_FILE="timezone"                          # saved timezone name, e.g. Asia/Kolkata
+          TZ_FILE="timezone"
           NM_DIR="/etc/NetworkManager/system-connections"
           MNT="/run/progress-usb"
           MIN_SECTORS=131072                      # 64 MiB free space needed to create CPSAVE
