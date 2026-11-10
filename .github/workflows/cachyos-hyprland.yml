@@ -932,34 +932,171 @@ jobs:
 
           cat > "$CONF/hypr/power.sh" <<'POWERSH'
           #!/bin/sh
-          # Power menu. Super+X opens it centred; the bar's power button runs "power.sh bar",
-          # which drops it down under the button. Also in the palette ("System: Power menu").
-          # Same wofi path as the palette (default style, no custom markup/stylesheet).
-          if [ "${1:-}" = bar ]; then
-            set -- $(sh "$HOME/.config/hypr/popup-pos.sh" 220 46)
-            place="--location top_left --xoffset $1 --yoffset $2"
-          else
-            place=""
-          fi
-          # Font Awesome icons written as UTF-8 bytes so this file stays plain ASCII.
-          i_lock=$(printf '\357\200\243')    # U+F023
-          i_out=$(printf '\357\213\265')     # U+F2F5
-          i_reboot=$(printf '\357\200\241')  # U+F021
-          i_off=$(printf '\357\200\221')     # U+F011
-          choice=$(printf '%s\n' \
-            "$i_lock  Lock" \
-            "$i_out  Log out" \
-            "$i_reboot  Reboot" \
-            "$i_off  Shut down" \
-            | wofi --dmenu --hide-search --insensitive --cache-file /dev/null --prompt Power \
-                --width 220 --height 200 $place)
-          case "$choice" in
-            *Lock*) exec hyprlock ;;
-            *Log\ out*) hyprctl dispatch 'hl.dsp.exit()'; hyprctl dispatch exit ;;
-            *Reboot*) systemctl reboot ;;
-            *Shut\ down*) systemctl poweroff ;;
-          esac
+          # Power menu (Super+X, or palette "System: Power menu"): toggle the power popup.
+          if pkill -f 'power-popup.py'; then exit 0; fi
+          LIB=/usr/lib/libgtk-layer-shell.so
+          [ -e "$LIB" ] || LIB=$(ls /usr/lib/libgtk-layer-shell.so* 2>/dev/null | head -n1)
+          LD_PRELOAD="$LIB" exec python3 "$HOME/.config/hypr/power-popup.py"
           POWERSH
+
+          cat > "$CONF/hypr/power-popup.py" <<'POWERPOPUP'
+          #!/usr/bin/env python3
+          import os, re, subprocess
+          import gi
+          gi.require_version("Gtk", "3.0")
+          gi.require_version("Gdk", "3.0")
+          gi.require_version("GtkLayerShell", "0.1")
+          from gi.repository import Gtk, Gdk, GtkLayerShell
+
+          WIDTH = 260
+
+          BG = "#282828"       # replaced by surface_container_high from colors.css if found
+          PILL = "#413D3A"
+          BORDER = "#514947"
+          GOLD = "#c7ab7a"
+          TEXT = "#ded8be"
+          DIM = "#ab9c88"
+          ERR = "#e07a6b"
+
+          try:
+              css_src = open(os.path.expanduser("~/.config/waybar/colors.css")).read()
+              m = re.search(r"@define-color\s+surface_container_high\s+(#[0-9a-fA-F]{6})", css_src)
+              if m:
+                  BG = m.group(1)
+          except OSError:
+              pass
+
+          # (icon, label, hotkey, command, dangerous)
+          ACTIONS = [
+              ("\uf023", "Lock",      "L", ["hyprlock"], False),
+              ("\uf2f5", "Log out",   "O", ["sh", "-c", "hyprctl dispatch 'hl.dsp.exit()'; hyprctl dispatch exit"], False),
+              ("\uf186", "Suspend",   "S", ["systemctl", "suspend"], False),
+              ("\uf021", "Reboot",    "R", ["systemctl", "reboot"], True),
+              ("\uf011", "Shut down", "P", ["systemctl", "poweroff"], True),
+          ]
+
+          CSS = f"""
+          window {{ background: transparent; }}
+          * {{ font-family: monospace, "Font Awesome 6 Free", sans-serif; font-size: 14px; color: {TEXT}; }}
+          .card {{ background: {BG}; border: 5px solid {BG}; border-radius: 6px; padding: 8px; }}
+          .title {{ color: {GOLD}; font-weight: bold; }}
+          .sep {{ background: {BORDER}; min-height: 1px; margin: 6px 0; }}
+          button {{ background: transparent; border: none; box-shadow: none; text-shadow: none; padding: 8px 10px; border-radius: 4px; }}
+          button:hover, button:focus {{ background: alpha({GOLD}, 0.18); }}
+          button:focus {{ background: {PILL}; }}
+          button.danger:hover label, button.danger:focus label {{ color: {ERR}; }}
+          .icon {{ color: {GOLD}; }}
+          .dim {{ color: {DIM}; font-size: 12px; }}
+          """
+
+
+          class Popup(Gtk.Window):
+              def __init__(self):
+                  super().__init__()
+
+                  self.set_app_paintable(True)
+                  vis = self.get_screen().get_rgba_visual()
+                  if vis:
+                      self.set_visual(vis)
+
+                  GtkLayerShell.init_for_window(self)
+                  GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
+                  GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
+                  GtkLayerShell.set_exclusive_zone(self, -1)
+                  for edge in (GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM,
+                              GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT):
+                      GtkLayerShell.set_anchor(self, edge, True)
+
+                  prov = Gtk.CssProvider()
+                  prov.load_from_data(CSS.encode())
+                  Gtk.StyleContext.add_provider_for_screen(
+                      Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+
+                  # full-screen transparent root: clicking outside the card closes the popup
+                  root = Gtk.EventBox()
+                  root.set_visible_window(False)
+                  root.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+                  root.connect("button-press-event", self.on_root_click)
+                  self.add(root)
+
+                  self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                  self.card.get_style_context().add_class("card")
+                  self.card.set_size_request(WIDTH, -1)
+                  self.card.set_halign(Gtk.Align.CENTER)
+                  self.card.set_valign(Gtk.Align.CENTER)
+                  root.add(self.card)
+
+                  title = Gtk.Label(label="\uf011  Power", xalign=0)
+                  title.get_style_context().add_class("title")
+                  title.set_margin_start(4)
+                  title.set_margin_top(4)
+                  title.set_margin_bottom(2)
+                  self.card.pack_start(title, False, False, 0)
+
+                  sep = Gtk.Box(); sep.get_style_context().add_class("sep")
+                  self.card.pack_start(sep, False, False, 0)
+
+                  self.buttons = []
+                  self.hotkeys = {}
+                  for icon, label, key, cmd, danger in ACTIONS:
+                      btn = Gtk.Button()
+                      if danger:
+                          btn.get_style_context().add_class("danger")
+                      box = Gtk.Box(spacing=12)
+                      ic = Gtk.Label(label=icon)
+                      ic.get_style_context().add_class("icon")
+                      ic.set_size_request(20, -1)
+                      box.pack_start(ic, False, False, 0)
+                      box.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0)
+                      hk = Gtk.Label(label=key)
+                      hk.get_style_context().add_class("dim")
+                      box.pack_end(hk, False, False, 0)
+                      btn.add(box)
+                      btn.connect("clicked", lambda *_a, c=cmd: self.run(c))
+                      self.card.pack_start(btn, False, False, 0)
+                      self.buttons.append(btn)
+                      self.hotkeys[key.lower()] = cmd
+
+                  hint = Gtk.Label(label="arrows + Enter, or press the letter  \u00b7  Esc closes", xalign=0)
+                  hint.get_style_context().add_class("dim")
+                  hint.set_margin_start(4)
+                  hint.set_margin_top(6)
+                  self.card.pack_start(hint, False, False, 0)
+
+                  self.connect("key-press-event", self.on_key)
+                  self.connect("destroy", Gtk.main_quit)
+                  self.show_all()
+                  self.buttons[0].grab_focus()
+
+              def run(self, cmd):
+                  try:
+                      subprocess.Popen(cmd, start_new_session=True,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  except OSError:
+                      pass
+                  Gtk.main_quit()
+
+              def on_key(self, _w, ev):
+                  if ev.keyval == Gdk.KEY_Escape:
+                      Gtk.main_quit()
+                      return True
+                  name = Gdk.keyval_name(ev.keyval) or ""
+                  if len(name) == 1 and name.lower() in self.hotkeys:
+                      self.run(self.hotkeys[name.lower()])
+                      return True
+                  return False
+
+              def on_root_click(self, _w, ev):
+                  a = self.card.get_allocation()
+                  if not (a.x <= ev.x <= a.x + a.width and a.y <= ev.y <= a.y + a.height):
+                      Gtk.main_quit()
+                  return True
+
+
+          if __name__ == "__main__":
+              Popup()
+              Gtk.main()
+          POWERPOPUP
 
           cat > "$CONF/wofi/config" <<'WOFICONF'
           allow_images=true
@@ -977,7 +1114,7 @@ jobs:
           #window {
             margin: 0;
             border: 1px solid #191919;
-            border-radius: 5px;
+            border-radius: 10px;
             background-color: rgba(0, 0, 0, 0.94);
             font-family: "Inter", "WenQuanYi Micro Hei", "Noto Sans", "DejaVu Sans", sans-serif;
             font-size: 15px;
@@ -4268,7 +4405,7 @@ jobs:
           for j in "$R/BraveSoftware/Brave-Browser/Default/Preferences"; do
             python3 -m json.tool "$j" >/dev/null || { echo "VERIFY FAIL: $j is not valid JSON" >&2; fail=1; }
           done
-          for py in "$R/hypr/ws-daemon.py" "$R/hypr/brave-wall-watch.py" "$R/hypr/wifi-popup.py" "$R/hypr/volume-popup.py" cachyos/archiso/airootfs/usr/share/cachyos-hyprland/genwall.py; do
+          for py in "$R/hypr/ws-daemon.py" "$R/hypr/brave-wall-watch.py" "$R/hypr/wifi-popup.py" "$R/hypr/power-popup.py" "$R/hypr/volume-popup.py" cachyos/archiso/airootfs/usr/share/cachyos-hyprland/genwall.py; do
             python3 -m py_compile "$py" || { echo "VERIFY FAIL: $py has a Python syntax error" >&2; fail=1; }
           done
           if grep -rq 'brave-launch\|cachyos-wall' cachyos/archiso/airootfs/etc cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
