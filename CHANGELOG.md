@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.2.0] - 2026-11-10
+
+### Added
+- New Wi-Fi popup. Click Wi-Fi in the bar to open a panel with an on/off switch, a refresh button and the list of nearby networks (signal bars, a lock on secured ones, "connected" on the current one). Saved networks connect with one click; new ones ask for the password right under the network. Click again, press Esc or click outside to close it. It replaces the old `nmtui` window.
+- New volume popup, replacing pavucontrol. It has a slider and mute button for the output, one for the microphone, and one for every app that is playing. With more than one output device you can switch between them (playing apps move along). It follows changes made with the volume keys.
+- New power menu popup: Lock, Log out, Suspend, Reboot and Shut down. Use the arrow keys and Enter, click, or press the letter shown next to each entry (L, O, S, R, P).
+- Clipboard history popup. Press **Super+C** (or pick "Clipboard: History" in the command palette) to see what you copied, with text as a preview and images as thumbnails. Type to search, use the arrow keys and Enter (or click) to paste an entry into the window you were in. Delete or the ✕ removes one entry, and "Clear all" (click twice to confirm) empties the history. It opens next to the mouse pointer and stays on screen.
+- Redesigned tooltips for the bar. Wi-Fi shows the network, signal in % and dBm, band, IP, gateway, interface and live speeds. Ethernet, "Not connected" and "Wi-Fi is off" got the same look. Volume shows the output device, volume and microphone level. The clock tooltip is a calendar with week numbers: scroll to change month, right-click to switch the view, middle-click to jump back to today.
+- The bar now shows the Wi-Fi icon with "off" while Wi-Fi is switched off.
+- "System: Change Keyboard Layout" in the command palette.
+- `wtype` is now included (it lets the clipboard popup paste for you).
+
+### Changed
+- Double-clicking the clock now opens a searchable timezone list, sorted by UTC offset, with the current time in each place. "Custom offset…" at the top still lets you type `5:30`, `5`, `-8` or a name like `Asia/Tokyo`. If setting the timezone fails, the notification now shows the reason.
+- The keyboard layout menu is simpler and opens as a normal window.
+- The app launcher, command palette and other menus are wider (650 px) and have rounder corners.
+- The Keyboard Shortcuts window (Super+F1) now lists Super+C and the new Wi-Fi and volume popups.
+
+### Removed
+- pavucontrol and the window rule that placed it under the volume button.
+
+### Fixed
+- The Wi-Fi icon disappeared from the bar when Wi-Fi was turned off, so there was no way to turn it back on. It stays visible now and the popup has the switch.
+- The power menu did not show up.
+- The keyboard layout menu did not work.
+
+### Notes
+- Apps can't see where the text cursor is on Wayland, so the clipboard popup opens at the mouse pointer instead.
+- Clipboard history is kept in RAM and is gone after a reboot. `save-progress` does not save it. It stores everything you copy, passwords included, so use "Clear all" when needed.
+- Pasting uses Ctrl+V, or Ctrl+Shift+V in terminals.
+- The Wi-Fi and volume popups sit at the top right under the bar. If one looks misplaced on your screen, change `RIGHT_MARGIN` at the top of `~/.config/hypr/wifi-popup.py` or `volume-popup.py`.
+
 ## [1.1.4] - 2026-11-08
 
 ### Added
@@ -28,7 +60,7 @@
 - Open programs keep running the old version after `updateos` until you restart them, and a new kernel only starts after a reboot.
 - Your current ISO does not have `updateos`, so boot this version normally once. Later updates can use it.
 - Brave only shows the generated picture once "Use your own" is picked for the background in Brave's new tab settings (Customize). Pick it once and it stays.
-- 
+
 ## [1.1.3] - 2026-11-08
 
 ### Added
