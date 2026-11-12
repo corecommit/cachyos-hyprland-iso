@@ -820,12 +820,6 @@ jobs:
               "states": { "warning": 25, "critical": 10 },
               "interval": 30
             },
-            "disk": {
-              "format": "<span color='#c7ab7a'>\uf0a0</span> {percentage_used}%",
-              "path": "/",
-              "interval": 30,
-              "tooltip-format": "{used} used of {total} on /"
-            },
             "pulseaudio": {
               "format": "<span color='#c7ab7a'>{icon}</span> {volume}%",
               "format-muted": "<span color='#c7ab7a'>\uf6a9</span> muted",
@@ -843,7 +837,18 @@ jobs:
               "format": "<span color='#c7ab7a'>\uf538</span> {}",
               "interval": 5
             },
-            "cpu": { "format": "<span color='#c7ab7a'>\uf2db</span> {usage}%", "interval": 3, "tooltip": false },
+            "disk": {
+              "format": "<span color='#c7ab7a'>\uf0a0</span> {percentage_used}%",
+              "path": "/",
+              "interval": 30,
+              "tooltip-format": "<tt><span color='#c7ab7a'><b>\uf0a0  Disk  /</b></span>\n<span color='#514947'>──────────────────────</span>\n<span color='#ab9c88'>Used  </span> {used}  ({percentage_used}%)\n<span color='#ab9c88'>Free  </span> {free}  ({percentage_free}%)\n<span color='#ab9c88'>Total </span> {total}</tt>"
+            },
+            "cpu": {
+              "format": "<span color='#c7ab7a'>\uf2db</span> {usage}%",
+              "interval": 3,
+              "tooltip": true,
+              "tooltip-format": "<tt><span color='#c7ab7a'><b>\uf2db  CPU</b></span>\n<span color='#514947'>──────────────────────</span>\n<span color='#ab9c88'>Usage </span> {usage}%\n<span color='#ab9c88'>Load  </span> {load}\n<span color='#ab9c88'>Freq  </span> {avg_frequency} GHz  (max {max_frequency})</tt>"
+            },
             "clock": {
               "format": "{:%H:%M}",
               "format-alt": "{:%a, %-d %b  %H:%M}",
@@ -1547,13 +1552,32 @@ jobs:
 
           cat > "$CONF/hypr/mem.sh" <<'MEMSH'
           #!/bin/sh
-          # Bar memory item (JSON): text "89%" (used share), tooltip "963 MiB / 30.96 GiB". used = total - available.
-          awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 }
-            END {
-              u = t - a
-              if (u < 1048576) us = sprintf("%d MiB", u / 1024); else us = sprintf("%.2f GiB", u / 1048576)
-              printf "{\"text\":\"%d%%\",\"tooltip\":\"%s / %.2f GiB\"}\n", (t > 0 ? u * 100 / t : 0), us, t / 1048576
-            }' /proc/meminfo
+          awk '
+          BEGIN { q="\047"; h=q "#c7ab7a" q; l=q "#ab9c88" q; v=q "#ded8be" q; s=q "#514947" q }
+          function row(label, val) { return "<span color=" l ">" label "</span> " val }
+          /^MemTotal:/    { t=$2 }
+          /^MemAvailable:/{ a=$2 }
+          /^Buffers:/     { b=$2 }
+          /^Cached:/      { c=$2 }
+          /^SwapTotal:/   { st=$2 }
+          /^SwapFree:/    { sf=$2 }
+          END {
+            g = 1048576
+            u = t - a
+            p = u * 100 / t
+            n = int(p / 10 + 0.5); bar = ""
+            for (i = 0; i < 10; i++) bar = bar (i < n ? "█" : "░")
+            sep = "<span color=" s ">──────────────────────</span>"
+            tip = "<tt><span color=" h "><b>\\uf538  Memory</b></span>\\n" sep "\\n"
+            tip = tip row("Used     ", sprintf("%.1f / %.1f GiB  (%.0f%%)", u/g, t/g, p)) "\\n"
+            tip = tip row("Available", sprintf("%.1f GiB", a/g)) "\\n"
+            tip = tip row("Cache    ", sprintf("%.1f GiB", (b+c)/g)) "\\n"
+            tip = tip "<span color=" v ">" bar "</span>\\n" sep "\\n"
+            if (st > 0) tip = tip row("Swap     ", sprintf("%.1f / %.1f GiB", (st-sf)/g, st/g))
+            else        tip = tip row("Swap     ", "none")
+            tip = tip "</tt>"
+            printf "{\"text\":\"%.0f%%\",\"tooltip\":\"%s\"}\n", p, tip
+          }' /proc/meminfo
           MEMSH
 
           # ---- Workspace buttons 1-2-3-4 (bar) ----
