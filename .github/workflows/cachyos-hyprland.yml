@@ -2902,6 +2902,12 @@ jobs:
 
           CUR_VER=$(sed -n 's/^VERSION="\(.*\)"/\1/p' /etc/cachyos-hyprland-release 2>/dev/null)
           CUR_VER=${CUR_VER:-unknown}
+          # rust or python (stamped since 1.2.1; "unknown" on older images)
+          CUR_FL=$(sed -n 's/^FLAVOUR="\(.*\)"/\1/p' /etc/cachyos-hyprland-release 2>/dev/null)
+          CUR_FL=${CUR_FL:-unknown}
+          lbl() {   # lbl VERSION FLAVOUR -> "1.2.1 (python)", or just the version when the flavour is unknown
+            if [ "$2" = unknown ]; then echo "$1"; else echo "$1 ($2)"; fi
+          }
 
           # ----------------------------------------------------------- device helpers
           rows() { lsblk -rpbno NAME,TYPE,PKNAME,SIZE,FSTYPE,LABEL,TRAN,RM 2>/dev/null | tr ' ' '\001'; }
@@ -2922,30 +2928,33 @@ jobs:
             done
           }
 
-          sfs_version() {   # $1 = an airootfs.sfs file -> prints the ISO version stamped inside it
-            local v
+          sfs_version() {   # $1 = an airootfs.sfs file -> prints VERSION<TAB>FLAVOUR stamped inside it
+            local v fl
             mkdir -p "$M_PROBE"
             mount -t squashfs -o ro,loop "$1" "$M_PROBE" 2>/dev/null || { rmdir "$M_PROBE" 2>/dev/null; return 1; }
             v=$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$M_PROBE/$REL_FILE" 2>/dev/null)
+            fl=$(sed -n 's/^FLAVOUR="\(.*\)"/\1/p' "$M_PROBE/$REL_FILE" 2>/dev/null)
             umount "$M_PROBE" 2>/dev/null
             rmdir "$M_PROBE" 2>/dev/null
-            echo "${v:-unknown}"
+            printf '%s\t%s\n' "${v:-unknown}" "${fl:-unknown}"
           }
 
-          scan() {   # prints: version<TAB>device<TAB>kind<TAB>path   (kind: sfs = flashed ISO, iso = .iso file)
-            local d dev fs v f
+          scan() {   # prints: version<TAB>device<TAB>kind<TAB>path<TAB>flavour   (kind: sfs = flashed ISO, iso = .iso file)
+            local d dev fs v f vv fl
             mkdir -p "$M_PART" "$M_ISO"
             for d in $(usb_disks); do
               members "$d" | while read -r dev fs; do
                 case " $FS_OK " in *" $fs "*) ;; *) continue ;; esac
                 mount -o ro "$dev" "$M_PART" 2>/dev/null || continue
                 if [ -f "$M_PART/$SFS_REL" ] && v=$(sfs_version "$M_PART/$SFS_REL"); then
-                  printf '%s\t%s\tsfs\t%s\n' "$v" "$dev" "$SFS_REL"
+                  IFS=$'\t' read -r vv fl <<<"$v"
+                  printf '%s\t%s\tsfs\t%s\t%s\n' "$vv" "$dev" "$SFS_REL" "$fl"
                 fi
                 while IFS= read -r f; do
                   mount -o ro,loop "$f" "$M_ISO" 2>/dev/null || continue
                   if [ -f "$M_ISO/$SFS_REL" ] && v=$(sfs_version "$M_ISO/$SFS_REL"); then
-                    printf '%s\t%s\tiso\t%s\n' "$v" "$dev" "${f#"$M_PART"/}"
+                    IFS=$'\t' read -r vv fl <<<"$v"
+                    printf '%s\t%s\tiso\t%s\t%s\n' "$vv" "$dev" "${f#"$M_PART"/}" "$fl"
                   fi
                   umount "$M_ISO" 2>/dev/null
                 done < <(find "$M_PART" -maxdepth 2 -type f -iname 'cachyos-hyprland-*.iso' 2>/dev/null)
@@ -2983,12 +2992,14 @@ jobs:
               for line in "${found[@]}"; do
                 [ -n "$line" ] || continue
                 ver=${line%%$'\t'*}
-                if [ "$ver" = "$CUR_VER" ] && [ "$CUR_VER" != unknown ]; then same=1; continue; fi
+                fl=${line##*$'\t'}
+                # the same version in the OTHER flavour is a valid update (it switches flavour)
+                if [ "$ver" = "$CUR_VER" ] && [ "$fl" = "$CUR_FL" ] && [ "$CUR_VER" != unknown ]; then same=1; continue; fi
                 usable+=("$line")
               done
               [ "${#usable[@]}" -gt 0 ] && break
               if [ "$same" = 1 ] && [ "$warned" = 0 ]; then
-                say "Found the version you are already running ($CUR_VER). Waiting for a different one..."
+                say "Found the version you are already running ($(lbl "$CUR_VER" "$CUR_FL")). Waiting for a different one..."
                 warned=1
               fi
               sleep 3
@@ -2997,8 +3008,8 @@ jobs:
               say "Found these versions (newest first):"
               i=1
               for line in "${usable[@]}"; do
-                IFS=$'\t' read -r v dev kind rel <<<"$line"
-                printf '  %d) %s   (%s: %s)\n' "$i" "$v" "$dev" "$rel"
+                IFS=$'\t' read -r v dev kind rel fl <<<"$line"
+                printf '  %d) %s   (%s: %s)\n' "$i" "$(lbl "$v" "$fl")" "$dev" "$rel"
                 i=$((i + 1))
               done
               read -r -p "Which one? [1-${#usable[@]}, Enter = 1] " n
@@ -3008,7 +3019,7 @@ jobs:
             else
               line=${usable[0]}
             fi
-            IFS=$'\t' read -r _ DEV KIND REL <<<"$line"
+            IFS=$'\t' read -r _ DEV KIND REL _ <<<"$line"
             mount -o ro "$DEV" "$M_PART" || die "could not read $DEV."
             if [ "$KIND" = iso ]; then
               mount -o ro,loop "$M_PART/$REL" "$M_ISO" || die "could not open $REL."
@@ -3022,11 +3033,20 @@ jobs:
           [ -d "$M_NEW/usr" ] || die "the new system image looks empty or damaged."
           NEW_VER=$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$M_NEW/$REL_FILE" 2>/dev/null)
           NEW_VER=${NEW_VER:-unknown}
-          say "Running version: $CUR_VER"
-          say "New version:     $NEW_VER"
+          NEW_FL=$(sed -n 's/^FLAVOUR="\(.*\)"/\1/p' "$M_NEW/$REL_FILE" 2>/dev/null)
+          NEW_FL=${NEW_FL:-unknown}
+          say "Running version: $(lbl "$CUR_VER" "$CUR_FL")"
+          say "New version:     $(lbl "$NEW_VER" "$NEW_FL")"
+
+          # A different flavour (rust <-> python) swaps the popups and helpers and, going to
+          # rust, removes Python from /usr. Programs of the old flavour must be stopped first.
+          FLAVOUR_CHANGED=0
+          [ "$NEW_FL" != "$CUR_FL" ] && FLAVOUR_CHANGED=1
 
           if [ "$NEW_VER" = "$CUR_VER" ] && [ "$NEW_VER" != unknown ]; then
-            ask "That is the version you are already running. Apply it again anyway?" || { say "Nothing was changed."; exit 0; }
+            if [ "$FLAVOUR_CHANGED" = 0 ]; then
+              ask "That is the version you are already running. Apply it again anyway?" || { say "Nothing was changed."; exit 0; }
+            fi
           elif [ "$NEW_VER" != unknown ] && [ "$CUR_VER" != unknown ] \
                && [ "$(printf '%s\n%s\n' "$NEW_VER" "$CUR_VER" | sort -V | head -n1)" = "$NEW_VER" ]; then
             ask "$NEW_VER is OLDER than the running $CUR_VER. Go back to it anyway?" || { say "Nothing was changed."; exit 0; }
@@ -3041,6 +3061,13 @@ jobs:
             say "NOTE: the new version has a different kernel ($NEW_K; you are running $OLD_K)."
             say "The update works, but the kernel itself only changes after a reboot. Until then the"
             say "graphics driver (especially NVIDIA) can be out of step with the old kernel."
+          fi
+
+          if [ "$FLAVOUR_CHANGED" = 1 ]; then
+            say ""
+            say "NOTE: this switches the popups and helpers to the $NEW_FL version ($CUR_FL now). Open Wi-Fi,"
+            say "volume, power and clipboard popups are closed, and the workspace buttons and the Brave"
+            say "wallpaper watcher are restarted. Everything else stays as it is."
           fi
 
           # ----------------------------------------------------------- what gets copied
@@ -3102,11 +3129,20 @@ jobs:
           fi
 
           say ""
-          ask "Update from $CUR_VER to $NEW_VER now? Your files stay; programs you installed with pacman since boot are removed (a reboot would do the same)." \
+          ask "Update from $(lbl "$CUR_VER" "$CUR_FL") to $(lbl "$NEW_VER" "$NEW_FL") now? Your files stay; programs you installed with pacman since boot are removed (a reboot would do the same)." \
             || { say "Cancelled. Nothing was changed."; exit 1; }
 
           # ------------------------------------------------------------------ the update
           fail=0
+          if [ "$FLAVOUR_CHANGED" = 1 ]; then
+            # Stop the old flavour's programs while their files still exist: going to rust
+            # deletes Python from /usr, and a Python program that is still running would fail
+            # the next time it loads a module. apply_live starts the new ones afterwards.
+            say "Closing the popups and helpers of the old version..."
+            for pat in 'hypr-ui (wifi|volume|power|clipboard)' 'hypr-helper ws-daemon' 'hypr-helper brave-wall-watch'; do
+              pkill -u "$LIVE_USER" -f "$pat" 2>/dev/null
+            done
+          fi
           say "Updating the system files (this can take a few minutes)..."
           for step in usr opt etc pacman; do
             sync_part "$step" --info=progress2
@@ -3165,10 +3201,12 @@ jobs:
             }
             as_user hyprctl reload >/dev/null 2>&1
             pkill -u "$LIVE_UID" -f 'hypr-helper ws-daemon' 2>/dev/null
+            pkill -u "$LIVE_UID" -f 'hypr-helper brave-wall-watch' 2>/dev/null
             pkill -u "$LIVE_UID" -x waybar 2>/dev/null
             sleep 0.5
             as_user setsid -f waybar >/dev/null 2>&1
             as_user setsid -f sh -c 'sleep 3; exec hypr-helper ws-daemon' >/dev/null 2>&1
+            as_user setsid -f hypr-helper brave-wall-watch >/dev/null 2>&1
             as_user makoctl reload >/dev/null 2>&1
             return 0
           }
@@ -3274,6 +3312,7 @@ jobs:
           {
             echo "NAME=\"CachyOS Hyprland ISO\""
             echo "VERSION=\"$VERSION\""
+            echo "FLAVOUR=\"$VARIANT\""
             echo "BUILD_DATE=\"$(date -u +%Y-%m-%d)\""
             echo "UPSTREAM_COMMIT=\"$up\""
             echo "REPO=\"https://github.com/${{ github.repository }}\""
@@ -3326,6 +3365,10 @@ jobs:
             echo "VERIFY FAIL: Super+Alt+Space is not bound to kb-switch.sh" >&2; fail=1
           fi
           R=cachyos/archiso/airootfs/etc/skel/.config
+          # updateos tells the flavours apart by this stamp (see the Stamp step)
+          if ! grep -qx "FLAVOUR=\"$VARIANT\"" cachyos/archiso/airootfs/etc/cachyos-hyprland-release; then
+            echo "VERIFY FAIL: etc/cachyos-hyprland-release does not carry FLAVOUR=\"$VARIANT\"" >&2; fail=1
+          fi
           if ! grep -q 'hypr-helper ws-daemon' "$R/hypr/hyprland.lua"; then
             echo "VERIFY FAIL: hyprland.lua does not start hypr-helper ws-daemon" >&2; fail=1
           fi
