@@ -95,11 +95,14 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fetch CHANGELOG.md
+      - name: Fetch CHANGELOG.md and Rust sources
         uses: actions/checkout@v4
         with:
           path: repo-src
-          sparse-checkout: CHANGELOG.md
+          sparse-checkout: |
+            CHANGELOG.md
+            hypr-helper
+            hypr-ui
           fetch-depth: 1
 
       - name: Free host disk space
@@ -132,7 +135,7 @@ jobs:
 
       - name: Install Base Build Dependencies
         run: |
-          pacman -Syu --noconfirm archiso mkinitcpio-archiso git squashfs-tools grub syslinux python lua pacman-contrib
+          pacman -Syu --noconfirm archiso mkinitcpio-archiso git squashfs-tools grub syslinux python lua pacman-contrib rust gtk3 gtk-layer-shell
 
       - name: Install patch helper
         run: |
@@ -195,6 +198,42 @@ jobs:
           mkdir -p cachyos/out
           chown -R builder:builder cachyos
 
+      # hypr-helper: wallpaper generator, workspace daemon, Brave wallpaper watcher and two tiny
+      # hyprctl tools (no GTK). hypr-ui: the Wi-Fi / volume / power / clipboard popups (GTK3).
+      # Both are built here in the builder container; only the two binaries go in the ISO.
+      - name: Build hypr-helper and hypr-ui (Rust)
+        run: |
+          set -euo pipefail
+          [ -f repo-src/hypr-helper/Cargo.toml ] || { echo "::error::repo-src/hypr-helper/Cargo.toml missing" >&2; exit 1; }
+          [ -f repo-src/hypr-ui/Cargo.toml ] || { echo "::error::repo-src/hypr-ui/Cargo.toml missing" >&2; exit 1; }
+          cargo build --release --manifest-path repo-src/hypr-helper/Cargo.toml
+          cargo build --release --manifest-path repo-src/hypr-ui/Cargo.toml
+          bin=repo-src/hypr-helper/target/release/hypr-helper
+          ui=repo-src/hypr-ui/target/release/hypr-ui
+          test -x "$bin"
+          test -x "$ui"
+          # hypr-ui needs a display, so only check that it starts and every library it needs exists.
+          out=$("$ui" 2>&1 || true)
+          case "$out" in *usage*) ;; *) echo "SELFTEST FAIL: hypr-ui did not start: $out" >&2; exit 1 ;; esac
+          missing=$(ldd "$ui" | grep 'not found' || true)
+          [ -z "$missing" ] || { echo "$missing" >&2; echo "SELFTEST FAIL: hypr-ui has missing libraries" >&2; exit 1; }
+          # popup-pos / kb-name must not crash without Hyprland running (they fall back).
+          [ "$("$bin" popup-pos 300 46)" = "100 46" ] || { echo "SELFTEST FAIL: popup-pos fallback" >&2; exit 1; }
+          "$bin" kb-name >/dev/null
+          # Self-test: every style must produce a valid PNG.
+          for style in glow aurora mesh; do
+            "$bin" genwall png "/tmp/selftest-$style.png" --style "$style" --seed 7
+            sig=$(head -c 4 "/tmp/selftest-$style.png" | tail -c 3)
+            [ "$sig" = "PNG" ] || { echo "SELFTEST FAIL: $style did not make a PNG" >&2; exit 1; }
+          done
+          "$bin" genwall png /tmp/selftest-random.png
+          [ -s /tmp/selftest-random.png ] || { echo "SELFTEST FAIL: random wallpaper is empty" >&2; exit 1; }
+          size=$(stat -c %s "$bin")
+          echo "hypr-helper: $((size / 1024)) KiB"
+          usize=$(stat -c %s "$ui")
+          echo "hypr-ui: $((usize / 1024)) KiB"
+          echo "hypr-helper binary: $((size / 1024)) KiB, hypr-ui binary: $((usize / 1024)) KiB" >> "$GITHUB_STEP_SUMMARY"
+
       # ------------------------------------------------------------------
       # PATCHES START HERE
       # ------------------------------------------------------------------
@@ -219,15 +258,13 @@ jobs:
             xdg-user-dirs xdg-utils
             # thunar: file manager (gvfs = trash/mounts, tumbler = thumbnails)
             thunar thunar-archive-plugin gvfs tumbler
-            # python: bar helpers (workspace buttons, popup placement) and the wallpaper generator
-            python
             # hypridle: auto-dim/blank/suspend
             hypridle
             # wl-clip-persist: clipboard survives the source app closing
             wl-clip-persist
             # swappy: annotate grim screenshots
             swappy
-            # libpulse: pactl, used by the volume popup (volume-popup.py)
+            # libpulse: pactl, used by the volume popup (hypr-ui volume)
             libpulse
             # mousepad: lightweight GUI text editor
             mousepad
@@ -251,8 +288,8 @@ jobs:
             inter-font wqy-microhei
             # rsync: updateos copies a new version of the system over the running one
             rsync
-            # wifi popup (wifi-popup.py): GTK3 + layer-shell bindings
-            gtk3 gtk-layer-shell python-gobject
+            # GTK3 + layer-shell: the hypr-ui popups (wifi/volume/power/clipboard) link against these
+            gtk3 gtk-layer-shell
             # wtype: lets the clipboard popup paste for you (sends Ctrl+V)
             wtype
           )
@@ -312,6 +349,24 @@ jobs:
             fi
           done
           if [ "$missing" -ne 0 ]; then exit 1; fi
+
+      # Info only: what in the ISO's package list still needs Python (direct dependencies),
+      # and how big the Python stack is, so we know if it can be dropped after the popups move to Rust.
+      - name: Report Python dependents (info only)
+        run: |
+          PKG_LIST=cachyos/archiso/packages_desktop.x86_64
+          {
+            echo "### Python in the ISO"
+            echo ""
+            echo '```'
+            pacman -Si python python-gobject python-cairo 2>/dev/null | grep -E '^(Name|Installed Size)' || true
+            echo ""
+            echo "Packages in the list that depend directly on python:"
+            grep -vE '^[[:space:]]*(#|$)' "$PKG_LIST" | while read -r pkg; do
+              pacman -Si "$pkg" 2>/dev/null | awk -v p="$pkg" '/^Depends On/ && $0 ~ /(: | )python(=|>|<| |$)/ { print "  " p }'
+            done
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Patch util-iso.sh
         run: |
@@ -395,208 +450,21 @@ jobs:
           mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/mako" "$CONF/gtk-3.0" "$CONF/gtk-4.0" "$CONF/matugen/templates" "$CONF/btop" "$CONF/BraveSoftware/Brave-Browser/Default"
 
           # Wallpaper: a new random one every login (wallpaper.sh). This build-time copy is only the
-          # fallback for the first frame / lock screen. genwall.py is pure python.
+          # fallback for the first frame / lock screen. Made by hypr-helper (Rust).
           mkdir -p "$AIROOT/usr/share/cachyos-hyprland"
-          cat > "$AIROOT/usr/share/cachyos-hyprland/genwall.py" <<'PYGEN'
-          #!/usr/bin/env python3
-          """Random dark wallpaper (pure python, no dependencies).
-
-          usage: genwall.py png OUT.png [--style glow|aurora|mesh] [--seed N] [--size WxH]
-
-          Three looks (picked at random unless --style is given):
-            glow    soft coloured light blobs on a dark gradient
-            aurora  flowing ribbons of light
-            mesh    smooth multi-colour gradient, gently warped
-          Colours come from a random colour harmony, so they always go together. A light vignette
-          and fine grain stop colour banding when the picture is scaled up.
-          The seed is the current time unless --seed is given, so every run is different. The file
-          is written next to its destination and moved over the old one: the old picture is deleted
-          and only one copy ever exists.
-          """
-          import colorsys, math, os, random, struct, sys, time, zlib
-
-          W, H = 512, 288   # small on purpose: fast to make; smooth pictures scale up cleanly
-
-
-          def hsv(h, s, v):
-              return [255.0 * c for c in colorsys.hsv_to_rgb(h % 1.0, min(1.0, max(0.0, s)), min(1.0, max(0.0, v)))]
-
-
-          def palette(rnd):
-              """(background colour, [accent colours]) from a random colour harmony."""
-              hue = rnd.random()
-              offsets = rnd.choice([
-                  (0.0, 0.06, -0.06, 0.12),        # analogous: neighbours
-                  (0.0, 0.5, 0.04, 0.46),          # complementary
-                  (0.0, 0.333, 0.667, 0.05),       # triadic
-                  (0.0, 0.42, 0.58, 0.08),         # split complementary
-              ])
-              bg = hsv(hue, rnd.uniform(0.45, 0.75), rnd.uniform(0.045, 0.09))
-              accents = [hsv(hue + o, rnd.uniform(0.40, 0.80), rnd.uniform(0.60, 0.98)) for o in offsets]
-              rnd.shuffle(accents)
-              return bg, accents
-
-
-          def mix(a, b, t):
-              return [a[i] + (b[i] - a[i]) * t for i in range(3)]
-
-
-          def style_glow(rnd, w, h):
-              bg, accents = palette(rnd)
-              top = mix(bg, accents[0], 0.07)
-              blobs = []
-              for i in range(rnd.randint(4, 6)):
-                  col = accents[i % len(accents)]
-                  cx, cy = rnd.uniform(0.05, 0.95), rnd.uniform(0.05, 0.95)
-                  rx, ry = rnd.uniform(0.10, 0.30), rnd.uniform(0.10, 0.34)
-                  s = rnd.uniform(0.40, 0.85)
-                  ex = [s * math.exp(-((x / w - cx) * w / h) ** 2 / (2 * rx * rx)) for x in range(w)]
-                  ey = [math.exp(-(y / h - cy) ** 2 / (2 * ry * ry)) for y in range(h)]
-                  blobs.append((col, ex, ey))
-              for y in range(h):
-                  row = []
-                  base = mix(top, bg, y / (h - 1))
-                  for x in range(w):
-                      r, g, b = base
-                      for col, ex, ey in blobs:
-                          k = ex[x] * ey[y]
-                          r += (col[0] - r) * k
-                          g += (col[1] - g) * k
-                          b += (col[2] - b) * k
-                      row.append((r, g, b))
-                  yield row
-
-
-          def style_aurora(rnd, w, h):
-              bg, accents = palette(rnd)
-              ribbons = []
-              for i in range(rnd.randint(3, 4)):
-                  ribbons.append((
-                      accents[i % len(accents)],
-                      rnd.uniform(0.25, 0.75),               # centre line height
-                      rnd.uniform(0.05, 0.14),               # wave size
-                      rnd.uniform(1.0, 2.6), rnd.uniform(0, 6.28),    # wave 1: frequency, phase
-                      rnd.uniform(2.5, 5.0), rnd.uniform(0, 6.28),    # wave 2
-                      rnd.uniform(0.045, 0.10),              # thickness
-                      rnd.uniform(0.5, 1.0),                 # brightness
-                      rnd.uniform(0.8, 2.0), rnd.uniform(0, 6.28),    # slow brightness change along x
-                  ))
-              cols = []
-              for (col, cy, amp, f1, p1, f2, p2, th, br, fb, pb) in ribbons:
-                  centre, bright = [], []
-                  for x in range(w):
-                      t = x / w
-                      centre.append(cy + amp * math.sin(f1 * 6.283 * t + p1) + amp * 0.4 * math.sin(f2 * 6.283 * t + p2))
-                      bright.append(br * (0.55 + 0.45 * math.sin(fb * 6.283 * t + pb)))
-                  cols.append((col, centre, bright, th))
-              for y in range(h):
-                  v = y / h
-                  base = mix(mix(bg, accents[0], 0.05), bg, v)
-                  row = []
-                  for x in range(w):
-                      r, g, b = base
-                      for col, centre, bright, th in cols:
-                          d = (v - centre[x]) / th
-                          if d > 3.2 or d < -3.2:
-                              continue
-                          # sharper on the lower edge, soft glow upwards: like a curtain of light
-                          k = math.exp(-d * d * (0.9 if d > 0 else 0.35)) * bright[x] * 0.8
-                          r += (col[0] - r) * k
-                          g += (col[1] - g) * k
-                          b += (col[2] - b) * k
-                      row.append((r, g, b))
-                  yield row
-
-
-          def style_mesh(rnd, w, h):
-              bg, accents = palette(rnd)
-              corners = [mix(bg, accents[i % len(accents)], rnd.uniform(0.35, 0.75)) for i in range(4)]
-              wa, wb = rnd.uniform(1.0, 2.2), rnd.uniform(1.0, 2.2)
-              pa, pb = rnd.uniform(0, 6.28), rnd.uniform(0, 6.28)
-              amp = rnd.uniform(0.10, 0.22)
-              for y in range(h):
-                  v = y / (h - 1)
-                  row = []
-                  for x in range(w):
-                      u = x / (w - 1)
-                      uu = min(1.0, max(0.0, u + amp * math.sin(wa * 6.283 * v + pa)))
-                      vv = min(1.0, max(0.0, v + amp * math.sin(wb * 6.283 * u + pb)))
-                      uu = uu * uu * (3 - 2 * uu)     # smoothstep: no visible grid lines
-                      vv = vv * vv * (3 - 2 * vv)
-                      top = mix(corners[0], corners[1], uu)
-                      bot = mix(corners[2], corners[3], uu)
-                      c = mix(top, bot, vv)
-                      row.append((c[0] * 0.55, c[1] * 0.55, c[2] * 0.55))   # keep it dark: it is a desktop
-                  yield row
-
-
-          STYLES = {"glow": style_glow, "aurora": style_aurora, "mesh": style_mesh}
-
-
-          def render(seed, style=None, w=W, h=H):
-              rnd = random.Random(seed)
-              name = style if style in STYLES else rnd.choice(sorted(STYLES))
-              grain = [rnd.uniform(-2.6, 2.6) for _ in range(4096)]
-              raw = bytearray()
-              cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
-              for y, row in enumerate(STYLES[name](rnd, w, h)):
-                  raw.append(0)
-                  dy = (y - cy) / cy
-                  for x, (r, g, b) in enumerate(row):
-                      dx = (x - cx) / cx
-                      vig = 1.0 - 0.30 * max(0.0, (dx * dx + dy * dy) / 2.0)   # darker towards the corners
-                      n = grain[(x * 31 + y * 17) & 4095]
-                      raw += bytes((min(255, max(0, int(r * vig + n))),
-                                    min(255, max(0, int(g * vig + n))),
-                                    min(255, max(0, int(b * vig + n)))))
-
-              def chunk(t, d):
-                  c = struct.pack(">I", len(d)) + t + d
-                  return c + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
-
-              return (b"\x89PNG\r\n\x1a\n"
-                      + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-                      + chunk(b"IDAT", zlib.compress(bytes(raw), 6))
-                      + chunk(b"IEND", b""))
-
-
-          def write_atomic(path, data):
-              os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-              tmp = path + ".tmp"
-              with open(tmp, "wb") as f:
-                  f.write(data)
-              os.replace(tmp, path)
-
-
-          def main():
-              a = sys.argv[1:]
-              if len(a) < 2 or a[0] != "png":
-                  sys.exit(__doc__)
-              out, seed, style, w, h = a[1], time.time_ns(), None, W, H
-              i = 2
-              try:
-                  while i < len(a):
-                      if a[i] == "--seed":
-                          seed = int(a[i + 1])
-                      elif a[i] == "--style" and a[i + 1] in STYLES:
-                          style = a[i + 1]
-                      elif a[i] == "--size":
-                          w, h = (int(n) for n in a[i + 1].lower().split("x"))
-                      else:
-                          raise ValueError(a[i])
-                      i += 2
-              except (ValueError, IndexError):
-                  sys.exit(__doc__)
-              write_atomic(out, render(seed, style, w, h))
-
-
-          if __name__ == "__main__":
-              main()
-          PYGEN
-          python3 "$AIROOT/usr/share/cachyos-hyprland/genwall.py" png "$CONF/hypr/wallpaper.png"
+          # hypr-helper and hypr-ui (Rust, built in the "Build hypr-helper and hypr-ui" step) replace every
+          # Python script the ISO used to have. No Python is needed at runtime.
+          install -Dm755 repo-src/hypr-helper/target/release/hypr-helper "$AIROOT/usr/bin/hypr-helper"
+          install -Dm755 repo-src/hypr-ui/target/release/hypr-ui "$AIROOT/usr/bin/hypr-ui"
+          # archiso does not keep file modes unless profiledef.sh lists them.
+          while IFS= read -r pd; do
+            sedx -o "$pd" '/^file_permissions=(/a\["/usr/bin/hypr-helper"]="0:0:755"'
+            sedx -o "$pd" '/^file_permissions=(/a\["/usr/bin/hypr-ui"]="0:0:755"'
+          done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
+          "$AIROOT/usr/bin/hypr-helper" genwall png "$CONF/hypr/wallpaper.png"
           # Brave: first new-tab picture, so a fresh ISO already has one in its home folder
           mkdir -p "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
-          python3 "$AIROOT/usr/share/cachyos-hyprland/genwall.py" png "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images/background.png"
+          "$AIROOT/usr/bin/hypr-helper" genwall png "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images/background.png"
 
           cat > "$CONF/hypr/hyprland.lua" <<'HYPRRICE'
           -- cachyos-hyprland rice
@@ -615,10 +483,10 @@ jobs:
             hl.exec_cmd("systemctl --user start hyprpolkitagent")
             hl.exec_cmd("sh ~/.config/hypr/wallpaper.sh")
             -- new Brave wallpaper every time a new tab opens
-            hl.exec_cmd("python3 ~/.config/hypr/brave-wall-watch.py")
+            hl.exec_cmd("hypr-helper brave-wall-watch")
             hl.exec_cmd("waybar")
             -- workspace buttons: starts after waybar so the first signal cannot hit a half-started bar
-            hl.exec_cmd("sh -c 'sleep 3; exec python3 ~/.config/hypr/ws-daemon.py'")
+            hl.exec_cmd("sh -c 'sleep 3; exec hypr-helper ws-daemon'")
             hl.exec_cmd("mako")
             hl.exec_cmd("wl-paste --type text --watch cliphist store")
             hl.exec_cmd("wl-paste --type image --watch cliphist store")
@@ -933,173 +801,40 @@ jobs:
           #network.disconnected { color: @warn; }
           WBCSS
 
+          # Popup settings you can edit live (open the popup again to see the change).
+          cat > "$CONF/hypr/popups.conf" <<'POPUPSCONF'
+          # Sizes and placement of the Wi-Fi, volume, power and clipboard popups (pixels).
+          # Edit a number, save, open the popup again. Delete a line to use its default.
+          top_margin=52
+          right_margin=150
+          wifi_width=340
+          wifi_max_height=300
+          volume_width=360
+          volume_max_height=420
+          volume_max=100
+          power_width=260
+          clipboard_width=400
+          clipboard_height=500
+          clipboard_gap=14
+          clipboard_items=60
+          POPUPSCONF
+
+          cat > "$CONF/hypr/popup-user.css" <<'POPUPUSERCSS'
+          /* Your own styling for the popups. Read every time a popup opens: save, open again.
+             It is applied on top of the built-in look. Examples (remove the comment marks):
+             .card { border-radius: 12px; }
+             * { font-size: 15px; }
+          */
+          POPUPUSERCSS
+
           cat > "$CONF/hypr/power.sh" <<'POWERSH'
           #!/bin/sh
-          # Power menu (Super+X, or palette "System: Power menu"): toggle the power popup.
-          if pkill -f 'power-popup.py'; then exit 0; fi
+          # Power menu (Super+X, or palette "System: Power menu"): toggle the power popup (hypr-ui power).
+          if pkill -f 'hypr-ui power'; then exit 0; fi
           LIB=/usr/lib/libgtk-layer-shell.so
           [ -e "$LIB" ] || LIB=$(ls /usr/lib/libgtk-layer-shell.so* 2>/dev/null | head -n1)
-          LD_PRELOAD="$LIB" exec python3 "$HOME/.config/hypr/power-popup.py"
+          LD_PRELOAD="$LIB" exec hypr-ui power
           POWERSH
-
-          cat > "$CONF/hypr/power-popup.py" <<'POWERPOPUP'
-          #!/usr/bin/env python3
-          import os, re, subprocess
-          import gi
-          gi.require_version("Gtk", "3.0")
-          gi.require_version("Gdk", "3.0")
-          gi.require_version("GtkLayerShell", "0.1")
-          from gi.repository import Gtk, Gdk, GtkLayerShell
-
-          WIDTH = 260
-
-          BG = "#282828"       # replaced by surface_container_high from colors.css if found
-          PILL = "#413D3A"
-          BORDER = "#514947"
-          GOLD = "#c7ab7a"
-          TEXT = "#ded8be"
-          DIM = "#ab9c88"
-          ERR = "#e07a6b"
-
-          try:
-              css_src = open(os.path.expanduser("~/.config/waybar/colors.css")).read()
-              m = re.search(r"@define-color\s+surface_container_high\s+(#[0-9a-fA-F]{6})", css_src)
-              if m:
-                  BG = m.group(1)
-          except OSError:
-              pass
-
-          # (icon, label, hotkey, command, dangerous)
-          ACTIONS = [
-              ("\uf023", "Lock",      "L", ["hyprlock"], False),
-              ("\uf2f5", "Log out",   "O", ["sh", "-c", "hyprctl dispatch 'hl.dsp.exit()'; hyprctl dispatch exit"], False),
-              ("\uf186", "Suspend",   "S", ["systemctl", "suspend"], False),
-              ("\uf021", "Reboot",    "R", ["systemctl", "reboot"], True),
-              ("\uf011", "Shut down", "P", ["systemctl", "poweroff"], True),
-          ]
-
-          CSS = f"""
-          window {{ background: transparent; }}
-          * {{ font-family: monospace, "Font Awesome 6 Free", sans-serif; font-size: 14px; color: {TEXT}; }}
-          .card {{ background: {BG}; border: 5px solid {BG}; border-radius: 6px; padding: 8px; }}
-          .title {{ color: {GOLD}; font-weight: bold; }}
-          .sep {{ background: {BORDER}; min-height: 1px; margin: 6px 0; }}
-          button {{ background: transparent; border: none; box-shadow: none; text-shadow: none; padding: 8px 10px; border-radius: 4px; }}
-          button:hover, button:focus {{ background: alpha({GOLD}, 0.18); }}
-          button:focus {{ background: {PILL}; }}
-          button.danger:hover label, button.danger:focus label {{ color: {ERR}; }}
-          .icon {{ color: {GOLD}; }}
-          .dim {{ color: {DIM}; font-size: 12px; }}
-          """
-
-
-          class Popup(Gtk.Window):
-              def __init__(self):
-                  super().__init__()
-
-                  self.set_app_paintable(True)
-                  vis = self.get_screen().get_rgba_visual()
-                  if vis:
-                      self.set_visual(vis)
-
-                  GtkLayerShell.init_for_window(self)
-                  GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-                  GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
-                  GtkLayerShell.set_exclusive_zone(self, -1)
-                  for edge in (GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM,
-                              GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT):
-                      GtkLayerShell.set_anchor(self, edge, True)
-
-                  prov = Gtk.CssProvider()
-                  prov.load_from_data(CSS.encode())
-                  Gtk.StyleContext.add_provider_for_screen(
-                      Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_USER)
-
-                  # full-screen transparent root: clicking outside the card closes the popup
-                  root = Gtk.EventBox()
-                  root.set_visible_window(False)
-                  root.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-                  root.connect("button-press-event", self.on_root_click)
-                  self.add(root)
-
-                  self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                  self.card.get_style_context().add_class("card")
-                  self.card.set_size_request(WIDTH, -1)
-                  self.card.set_halign(Gtk.Align.CENTER)
-                  self.card.set_valign(Gtk.Align.CENTER)
-                  root.add(self.card)
-
-                  title = Gtk.Label(label="\uf011  Power", xalign=0)
-                  title.get_style_context().add_class("title")
-                  title.set_margin_start(4)
-                  title.set_margin_top(4)
-                  title.set_margin_bottom(2)
-                  self.card.pack_start(title, False, False, 0)
-
-                  sep = Gtk.Box(); sep.get_style_context().add_class("sep")
-                  self.card.pack_start(sep, False, False, 0)
-
-                  self.buttons = []
-                  self.hotkeys = {}
-                  for icon, label, key, cmd, danger in ACTIONS:
-                      btn = Gtk.Button()
-                      if danger:
-                          btn.get_style_context().add_class("danger")
-                      box = Gtk.Box(spacing=12)
-                      ic = Gtk.Label(label=icon)
-                      ic.get_style_context().add_class("icon")
-                      ic.set_size_request(20, -1)
-                      box.pack_start(ic, False, False, 0)
-                      box.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0)
-                      hk = Gtk.Label(label=key)
-                      hk.get_style_context().add_class("dim")
-                      box.pack_end(hk, False, False, 0)
-                      btn.add(box)
-                      btn.connect("clicked", lambda *_a, c=cmd: self.run(c))
-                      self.card.pack_start(btn, False, False, 0)
-                      self.buttons.append(btn)
-                      self.hotkeys[key.lower()] = cmd
-
-                  hint = Gtk.Label(label="arrows + Enter, or press the letter  \u00b7  Esc closes", xalign=0)
-                  hint.get_style_context().add_class("dim")
-                  hint.set_margin_start(4)
-                  hint.set_margin_top(6)
-                  self.card.pack_start(hint, False, False, 0)
-
-                  self.connect("key-press-event", self.on_key)
-                  self.connect("destroy", Gtk.main_quit)
-                  self.show_all()
-                  self.buttons[0].grab_focus()
-
-              def run(self, cmd):
-                  try:
-                      subprocess.Popen(cmd, start_new_session=True,
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                  except OSError:
-                      pass
-                  Gtk.main_quit()
-
-              def on_key(self, _w, ev):
-                  if ev.keyval == Gdk.KEY_Escape:
-                      Gtk.main_quit()
-                      return True
-                  name = Gdk.keyval_name(ev.keyval) or ""
-                  if len(name) == 1 and name.lower() in self.hotkeys:
-                      self.run(self.hotkeys[name.lower()])
-                      return True
-                  return False
-
-              def on_root_click(self, _w, ev):
-                  a = self.card.get_allocation()
-                  if not (a.x <= ev.x <= a.x + a.width and a.y <= ev.y <= a.y + a.height):
-                      Gtk.main_quit()
-                  return True
-
-
-          if __name__ == "__main__":
-              Popup()
-              Gtk.main()
-          POWERPOPUP
 
           cat > "$CONF/wofi/config" <<'WOFICONF'
           allow_images=true
@@ -1418,429 +1153,11 @@ jobs:
           cat > "$CONF/hypr/clipboard.sh" <<'CLIPBOARDSH'
           #!/bin/sh
           # Super+C: toggle the clipboard history popup.
-          if pkill -f 'clipboard-popup.py'; then exit 0; fi
+          if pkill -f 'hypr-ui clipboard'; then exit 0; fi
           LIB=/usr/lib/libgtk-layer-shell.so
           [ -e "$LIB" ] || LIB=$(ls /usr/lib/libgtk-layer-shell.so* 2>/dev/null | head -n1)
-          LD_PRELOAD="$LIB" exec python3 "$HOME/.config/hypr/clipboard-popup.py"
+          LD_PRELOAD="$LIB" exec hypr-ui clipboard
           CLIPBOARDSH
-
-          cat > "$CONF/hypr/clipboard-popup.py" <<'CLIPBOARDPOPUP'
-          #!/usr/bin/env python3
-          import json, os, re, subprocess, threading
-          from concurrent.futures import ThreadPoolExecutor
-          import gi
-          gi.require_version("Gtk", "3.0")
-          gi.require_version("Gdk", "3.0")
-          gi.require_version("GtkLayerShell", "0.1")
-          gi.require_version("GdkPixbuf", "2.0")
-          from gi.repository import Gtk, Gdk, GLib, GtkLayerShell, GdkPixbuf
-
-          WIDTH = 400
-          CARD_H = 500         # fixed height, so the popup can be placed predictably
-          GAP = 14             # distance between the mouse pointer and the popup
-          MAX_ITEMS = 60
-          THUMB_W, THUMB_H = 360, 110
-
-          BG = "#282828"       # replaced by surface_container_high from colors.css if found
-          PILL = "#413D3A"
-          BORDER = "#514947"
-          GOLD = "#c7ab7a"
-          TEXT = "#ded8be"
-          DIM = "#ab9c88"
-          ERR = "#e07a6b"
-
-          try:
-              css_src = open(os.path.expanduser("~/.config/waybar/colors.css")).read()
-              m = re.search(r"@define-color\s+surface_container_high\s+(#[0-9a-fA-F]{6})", css_src)
-              if m:
-                  BG = m.group(1)
-          except OSError:
-              pass
-
-          # what cliphist shows for binary entries: "[[ binary data 1.2 MiB png 800x600 ]]"
-          IMG_RE = re.compile(r"^\[\[ binary data (.+?) (png|jpg|jpeg|bmp|webp|gif|tiff?) (\d+x\d+) \]\]")
-
-          POOL = ThreadPoolExecutor(3)
-
-
-          def pointer_anchor():
-              """Pointer position relative to its monitor: (x, y, monitor_w, monitor_h), or None."""
-              try:
-                  c = json.loads(subprocess.check_output(["hyprctl", "-j", "cursorpos"], text=True, timeout=2))
-                  mons = json.loads(subprocess.check_output(["hyprctl", "-j", "monitors"], text=True, timeout=2))
-              except Exception:
-                  return None
-              for m in mons:
-                  w, h = m["width"], m["height"]
-                  if m.get("transform", 0) % 2:
-                      w, h = h, w
-                  w, h = w / m["scale"], h / m["scale"]
-                  if m["x"] <= c["x"] < m["x"] + w and m["y"] <= c["y"] < m["y"] + h:
-                      return c["x"] - m["x"], c["y"] - m["y"], w, h
-              return None
-
-
-          CSS = f"""
-          window {{ background: transparent; }}
-          * {{ font-family: monospace, "Font Awesome 6 Free", sans-serif; font-size: 14px; color: {TEXT}; }}
-          .card {{ background: {BG}; border: 5px solid {BG}; border-radius: 6px; padding: 8px; }}
-          .title {{ color: {GOLD}; font-weight: bold; }}
-          .sep {{ background: {BORDER}; min-height: 1px; margin: 6px 0; }}
-          button {{ background: transparent; border: none; box-shadow: none; text-shadow: none; padding: 6px 8px; border-radius: 4px; }}
-          button:hover {{ background: alpha({GOLD}, 0.18); }}
-          .del label {{ color: {DIM}; font-size: 12px; }}
-          .del:hover label {{ color: {ERR}; }}
-          .confirm label {{ color: {ERR}; }}
-          .dim {{ color: {DIM}; font-size: 12px; }}
-          entry {{ background: {PILL}; border: 1px solid {BORDER}; border-radius: 4px; padding: 4px 8px; box-shadow: none; }}
-          entry:focus {{ border-color: {GOLD}; }}
-          viewport {{ background: transparent; }}
-          list {{ background: transparent; }}
-          list row {{ padding: 6px 8px; border-radius: 4px; }}
-          list row:hover {{ background: alpha({GOLD}, 0.18); }}
-          list row:selected {{ background: {PILL}; }}
-          scrolledwindow undershoot, scrolledwindow overshoot {{ background: none; }}
-          """
-
-          TERMINALS = ("kitty", "foot", "alacritty", "wezterm", "ghostty", "konsole", "xterm", "gnome-terminal")
-
-
-          def active_class():
-              try:
-                  w = json.loads(subprocess.check_output(["hyprctl", "-j", "activewindow"], text=True, timeout=2))
-                  return (w.get("class") or "").lower()
-              except Exception:
-                  return ""
-
-
-          def auto_paste():
-              """Press Ctrl+V (Ctrl+Shift+V in terminals) in the window you came from."""
-              cls = active_class()
-              if not cls:
-                  return
-              if any(t in cls for t in TERMINALS):
-                  keys = ["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]
-              else:
-                  keys = ["-M", "ctrl", "-k", "v", "-m", "ctrl"]
-              # short delay: the popup must close and give focus back first
-              subprocess.Popen(["sh", "-c", 'sleep 0.2; exec wtype "$@"', "wtype", *keys],
-                     start_new_session=True,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-          class Item(Gtk.ListBoxRow):
-              def __init__(self, popup, line):
-                  super().__init__()
-                  self.popup = popup
-                  self.line = line
-                  self.cid, _, prev = line.partition("\t")
-                  prev = prev.strip()
-                  m = IMG_RE.match(prev)
-                  self.mime = None
-                  self.img = None
-
-                  outer = Gtk.Box(spacing=8)
-                  body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-
-                  if m:
-                      size, ext, dims = m.groups()
-                      ext = "jpeg" if ext == "jpg" else ext
-                      self.mime = f"image/{ext}"
-                      self.search = f"image {ext} {dims} {size}".lower()
-                      self.img = Gtk.Image()
-                      self.img.set_halign(Gtk.Align.START)
-                      self.img.set_size_request(-1, 40)
-                      body.pack_start(self.img, False, False, 0)
-                      cap = Gtk.Label(label=f"image  \u00b7  {ext}  \u00b7  {dims}  \u00b7  {size}", xalign=0)
-                      cap.get_style_context().add_class("dim")
-                      body.pack_start(cap, False, False, 0)
-                      POOL.submit(self.load_thumb)
-                  else:
-                      self.search = prev.lower()
-                      lab = Gtk.Label(label=prev or "(empty)", xalign=0, ellipsize=3)
-                      lab.set_single_line_mode(True)
-                      body.pack_start(lab, False, False, 0)
-
-                  outer.pack_start(body, True, True, 0)
-
-                  d = Gtk.Button(label="\uf00d")
-                  d.get_style_context().add_class("del")
-                  d.set_can_focus(False)
-                  d.set_valign(Gtk.Align.CENTER)
-                  d.connect("clicked", lambda *_: popup.delete(self))
-                  outer.pack_end(d, False, False, 0)
-                  self.add(outer)
-
-              def load_thumb(self):
-                  try:
-                      data = subprocess.run(["cliphist", "decode", self.cid],
-                                            capture_output=True, timeout=10).stdout
-                      loader = GdkPixbuf.PixbufLoader()
-                      loader.write(data)
-                      loader.close()
-                      pb = loader.get_pixbuf()
-                      if pb is None:
-                          return
-                      w, h = pb.get_width(), pb.get_height()
-                      r = min(THUMB_W / w, THUMB_H / h, 1.0)
-                      if r < 1.0:
-                          pb = pb.scale_simple(max(1, int(w * r)), max(1, int(h * r)),
-                                              GdkPixbuf.InterpType.BILINEAR)
-                      GLib.idle_add(self.set_thumb, pb)
-                  except Exception:
-                      pass
-
-              def set_thumb(self, pb):
-                  self.img.set_from_pixbuf(pb)
-                  self.img.set_size_request(-1, -1)
-                  return False
-
-
-          class Popup(Gtk.Window):
-              def __init__(self):
-                  super().__init__()
-                  self.wipe_armed = False
-
-                  self.set_app_paintable(True)
-                  vis = self.get_screen().get_rgba_visual()
-                  if vis:
-                      self.set_visual(vis)
-
-                  GtkLayerShell.init_for_window(self)
-                  GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-                  GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
-                  GtkLayerShell.set_exclusive_zone(self, -1)
-                  for edge in (GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM,
-                              GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT):
-                      GtkLayerShell.set_anchor(self, edge, True)
-
-                  prov = Gtk.CssProvider()
-                  prov.load_from_data(CSS.encode())
-                  Gtk.StyleContext.add_provider_for_screen(
-                      Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_USER)
-
-                  # full-screen transparent root: clicking outside the card closes the popup
-                  root = Gtk.EventBox()
-                  root.set_visible_window(False)
-                  root.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-                  root.connect("button-press-event", self.on_root_click)
-                  self.add(root)
-
-                  self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                  self.card.get_style_context().add_class("card")
-                  self.card.set_size_request(WIDTH, CARD_H)
-                  self.place_card()
-                  root.add(self.card)
-
-                  title = Gtk.Label(label="\uf328  Clipboard", xalign=0)
-                  title.get_style_context().add_class("title")
-                  title.set_margin_start(4)
-                  title.set_margin_bottom(6)
-                  self.card.pack_start(title, False, False, 0)
-
-                  self.search = Gtk.Entry()
-                  self.search.set_placeholder_text("Search\u2026")
-                  self.search.connect("changed", self.on_search)
-                  self.card.pack_start(self.search, False, False, 0)
-
-                  sep = Gtk.Box(); sep.get_style_context().add_class("sep")
-                  self.card.pack_start(sep, False, False, 0)
-
-                  self.scroll = Gtk.ScrolledWindow()
-                  self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-                  self.list = Gtk.ListBox()
-                  self.list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-                  self.list.set_activate_on_single_click(True)
-                  self.list.connect("row-activated", lambda _l, row: self.pick(row))
-                  self.note = Gtk.Label(label="Loading\u2026")
-                  self.note.get_style_context().add_class("dim")
-                  self.note.set_margin_top(12)
-                  self.scroll.add(self.list)
-                  self.card.pack_start(self.scroll, True, True, 0)
-                  self.card.pack_start(self.note, False, False, 0)
-
-                  sep2 = Gtk.Box(); sep2.get_style_context().add_class("sep")
-                  self.card.pack_start(sep2, False, False, 0)
-                  foot = Gtk.Box(spacing=6)
-                  hint = Gtk.Label(label="\u2191\u2193 Enter copy  \u00b7  Del remove", xalign=0)
-                  hint.get_style_context().add_class("dim")
-                  foot.pack_start(hint, True, True, 4)
-                  self.wipe_btn = Gtk.Button(label="Clear all")
-                  self.wipe_btn.connect("clicked", self.on_wipe)
-                  foot.pack_end(self.wipe_btn, False, False, 0)
-                  close = Gtk.Button(label="Close")
-                  close.connect("clicked", lambda *_: Gtk.main_quit())
-                  foot.pack_end(close, False, False, 0)
-                  self.card.pack_start(foot, False, False, 0)
-
-                  self.connect("key-press-event", self.on_key)
-                  self.connect("destroy", Gtk.main_quit)
-                  self.show_all()
-                  self.note.show()
-                  self.search.grab_focus()
-                  self.reload()
-
-              # ---------- placement ----------
-              def place_card(self):
-                  """Open next to the mouse pointer (Wayland gives apps no text-caret position)."""
-                  a = pointer_anchor()
-                  if a is None:
-                      self.card.set_halign(Gtk.Align.CENTER)
-                      self.card.set_valign(Gtk.Align.CENTER)
-                      return
-                  px, py, mw, mh = a
-                  x = max(8, min(px - WIDTH / 2, mw - WIDTH - 8))
-                  y = py + GAP
-                  if y + CARD_H > mh - 8:          # no room below: open above the pointer
-                      y = py - CARD_H - GAP
-                  y = max(8, min(y, mh - CARD_H - 8))
-                  self.card.set_halign(Gtk.Align.START)
-                  self.card.set_valign(Gtk.Align.START)
-                  self.card.set_margin_start(int(x))
-                  self.card.set_margin_top(int(y))
-
-              # ---------- data ----------
-              def reload(self):
-                  def work():
-                      try:
-                          out = subprocess.run(["cliphist", "list"], capture_output=True,
-                                              text=True, errors="replace", timeout=10).stdout
-                      except Exception:
-                          out = ""
-                      GLib.idle_add(self.populate, [l for l in out.splitlines() if l.strip()])
-                  threading.Thread(target=work, daemon=True).start()
-
-              def populate(self, lines):
-                  for c in self.list.get_children():
-                      self.list.remove(c)
-                  for line in lines[:MAX_ITEMS]:
-                      self.list.add(Item(self, line))
-                  self.list.show_all()
-                  self.on_search(self.search)
-                  return False
-
-              def visible_rows(self):
-                  return [r for r in self.list.get_children() if r.get_visible()]
-
-              def update_note(self):
-                  rows = self.visible_rows()
-                  if rows:
-                      self.note.hide()
-                  else:
-                      self.note.set_text("Nothing copied yet" if not self.search.get_text()
-                                        else "No matches")
-                      self.note.show()
-
-              def on_search(self, entry):
-                  q = entry.get_text().strip().lower()
-                  for r in self.list.get_children():
-                      r.set_visible(q in r.search)
-                  rows = self.visible_rows()
-                  if rows:
-                      self.select(rows[0])
-                  self.update_note()
-
-              # ---------- selection ----------
-              def select(self, row):
-                  self.list.select_row(row)
-                  GLib.idle_add(self.reveal, row)
-
-              def reveal(self, row):
-                  a = row.get_allocation()
-                  adj = self.scroll.get_vadjustment()
-                  if a.y < adj.get_value():
-                      adj.set_value(a.y)
-                  elif a.y + a.height > adj.get_value() + adj.get_page_size():
-                      adj.set_value(a.y + a.height - adj.get_page_size())
-                  return False
-
-              def move(self, d):
-                  rows = self.visible_rows()
-                  if not rows:
-                      return
-                  cur = self.list.get_selected_row()
-                  i = rows.index(cur) if cur in rows else -1
-                  self.select(rows[max(0, min(len(rows) - 1, i + d))])
-
-              # ---------- actions ----------
-              def pick(self, row):
-                if row is None:
-                    return
-                try:
-                    data = subprocess.run(["cliphist", "decode", row.cid],
-                                          capture_output=True, timeout=10).stdout
-                    args = ["wl-copy"] + (["--type", row.mime] if row.mime else [])
-                    p = subprocess.Popen(args, stdin=subprocess.PIPE, start_new_session=True,
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    p.stdin.write(data)
-                    p.stdin.close()
-                    auto_paste()
-                except Exception:
-                    pass
-                Gtk.main_quit()
-
-              def delete(self, row):
-                  try:
-                      subprocess.run(["cliphist", "delete"], input=row.line.encode(),
-                                    capture_output=True, timeout=5)
-                  except Exception:
-                      return
-                  rows = self.visible_rows()
-                  nxt = None
-                  if row in rows:
-                      i = rows.index(row)
-                      rest = rows[:i] + rows[i + 1:]
-                      if rest:
-                          nxt = rest[min(i, len(rest) - 1)]
-                  self.list.remove(row)
-                  if nxt is not None:
-                      self.select(nxt)
-                  self.update_note()
-
-              def on_wipe(self, btn):
-                  if not self.wipe_armed:
-                      self.wipe_armed = True
-                      btn.set_label("Click again to confirm")
-                      btn.get_style_context().add_class("confirm")
-                      return
-                  subprocess.run(["cliphist", "wipe"], capture_output=True, timeout=5)
-                  self.wipe_armed = False
-                  btn.set_label("Clear all")
-                  btn.get_style_context().remove_class("confirm")
-                  self.populate([])
-
-              # ---------- events ----------
-              def on_key(self, _w, ev):
-                  k = ev.keyval
-                  if k == Gdk.KEY_Escape:
-                      Gtk.main_quit()
-                      return True
-                  if k == Gdk.KEY_Down:
-                      self.move(1)
-                      return True
-                  if k == Gdk.KEY_Up:
-                      self.move(-1)
-                      return True
-                  if k in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-                      self.pick(self.list.get_selected_row())
-                      return True
-                  if k == Gdk.KEY_Delete and not self.search.get_text():
-                      row = self.list.get_selected_row()
-                      if row is not None:
-                          self.delete(row)
-                      return True
-                  return False
-
-              def on_root_click(self, _w, ev):
-                  a = self.card.get_allocation()
-                  if not (a.x <= ev.x <= a.x + a.width and a.y <= ev.y <= a.y + a.height):
-                      Gtk.main_quit()
-                  return True
-
-
-          if __name__ == "__main__":
-              Popup()
-              Gtk.main()
-          CLIPBOARDPOPUP
 
           # ---- Popups: dropdowns under bar buttons, Wi-Fi, volume, clock/timezone, launcher, theme ----
           cat > "$CONF/hypr/popup-pos.sh" <<'POPUPPOS'
@@ -1848,26 +1165,7 @@ jobs:
           # popup-pos.sh WIDTH [TOP] -> prints "X Y": where a popup of WIDTH px must go so it sits
           # centred under the mouse pointer (the bar button that was just clicked), TOP px from the
           # top of the monitor and kept on screen. Falls back to "100 TOP".
-          python3 - "${1:-300}" "${2:-46}" <<'PY' 2>/dev/null || echo "100 ${2:-46}"
-          import json, subprocess, sys
-          w, top = int(sys.argv[1]), int(sys.argv[2])
-          def hc(cmd):
-              return json.loads(subprocess.check_output(["hyprctl", "-j", cmd], text=True))
-          c = hc("cursorpos")
-          mons = hc("monitors")
-          def size(m):
-              mw, mh = m["width"], m["height"]
-              if m.get("transform", 0) % 2:
-                  mw, mh = mh, mw
-              return mw / m["scale"], mh / m["scale"]
-          def has(m):
-              sw, sh = size(m)
-              return m["x"] <= c["x"] < m["x"] + sw and m["y"] <= c["y"] < m["y"] + sh
-          mon = next((m for m in mons if has(m)), mons[0])
-          sw, _ = size(mon)
-          x = max(8, min(c["x"] - mon["x"] - w / 2, sw - w - 8))
-          print(int(x), top)
-          PY
+          exec hypr-helper popup-pos "${1:-300}" "${2:-46}"
           POPUPPOS
 
           cat > "$CONF/hypr/kb-menu.sh" <<'KBMENU'
@@ -2051,801 +1349,22 @@ jobs:
 
           cat > "$CONF/hypr/wifi.sh" <<'WIFISH'
           #!/bin/sh
-          # Click Wi-Fi in the bar: toggle the Wi-Fi popup (wifi-popup.py).
-          if pkill -f 'wifi-popup.py'; then exit 0; fi
+          # Click Wi-Fi in the bar: toggle the Wi-Fi popup (hypr-ui wifi).
+          if pkill -f 'hypr-ui wifi'; then exit 0; fi
           rfkill unblock wifi 2>/dev/null || sudo -n rfkill unblock wifi 2>/dev/null
           LIB=/usr/lib/libgtk-layer-shell.so
           [ -e "$LIB" ] || LIB=$(ls /usr/lib/libgtk-layer-shell.so* 2>/dev/null | head -n1)
-          LD_PRELOAD="$LIB" exec python3 "$HOME/.config/hypr/wifi-popup.py"
+          LD_PRELOAD="$LIB" exec hypr-ui wifi
           WIFISH
-
-          cat > "$CONF/hypr/wifi-popup.py" <<'WIFIPOPUP'
-          #!/usr/bin/env python3
-          import os, re, subprocess, threading
-          from concurrent.futures import ThreadPoolExecutor
-          import gi
-          gi.require_version("Gtk", "3.0")
-          gi.require_version("Gdk", "3.0")
-          gi.require_version("GtkLayerShell", "0.1")
-          from gi.repository import Gtk, Gdk, GLib, GtkLayerShell
-
-          # placement: distance from the top-right corner of the screen
-          TOP_MARGIN = 52      # gap below the bar
-          RIGHT_MARGIN = 150   # increase to move the box left
-          WIDTH = 340
-          MAX_LIST_HEIGHT = 300
-
-          BG = "#282828"       # replaced by surface_container_high from colors.css if found
-          PILL = "#413D3A"
-          BORDER = "#514947"
-          GOLD = "#c7ab7a"
-          TEXT = "#ded8be"
-          DIM = "#ab9c88"
-          ERR = "#e07a6b"
-
-          try:
-              css_src = open(os.path.expanduser("~/.config/waybar/colors.css")).read()
-              m = re.search(r"@define-color\s+surface_container_high\s+(#[0-9a-fA-F]{6})", css_src)
-              if m:
-                  BG = m.group(1)
-          except OSError:
-              pass
-
-
-          def run(*args, timeout=40):
-              try:
-                  p = subprocess.run(["nmcli", *args], capture_output=True, text=True, timeout=timeout)
-                  return p.returncode, (p.stdout + p.stderr).strip()
-              except Exception as e:
-                  return 1, str(e)
-
-
-          def split_terse(line):
-              out, cur, esc = [], "", False
-              for ch in line:
-                  if esc:
-                      cur += ch; esc = False
-                  elif ch == "\\":
-                      esc = True
-                  elif ch == ":":
-                      out.append(cur); cur = ""
-                  else:
-                      cur += ch
-              out.append(cur)
-              return out
-
-
-          def get_networks():
-              # the three queries run in parallel: much faster than one after another
-              with ThreadPoolExecutor(3) as ex:
-                  f_radio = ex.submit(run, "radio", "wifi")
-                  f_saved = ex.submit(run, "-t", "-f", "NAME,TYPE", "con", "show")
-                  f_list = ex.submit(run, "-t", "-f", "IN-USE,SIGNAL,SECURITY,SSID",
-                                     "dev", "wifi", "list", "--rescan", "no")
-                  radio, saved_out, out = f_radio.result()[1], f_saved.result()[1], f_list.result()[1]
-              on = radio.strip() == "enabled"
-              if not on:
-                  return on, []
-              saved = {split_terse(l)[0] for l in saved_out.splitlines() if "wireless" in l}
-              best = {}
-              for line in out.splitlines():
-                  f = split_terse(line)
-                  if len(f) < 4 or not f[3]:
-                      continue
-                  net = {"active": f[0].strip() == "*", "signal": int(f[1] or 0),
-                         "secure": f[2] not in ("", "--"), "ssid": f[3], "saved": f[3] in saved}
-                  old = best.get(net["ssid"])
-                  if not old or net["active"] or (not old["active"] and net["signal"] > old["signal"]):
-                      best[net["ssid"]] = net
-              nets = sorted(best.values(), key=lambda n: (not n["active"], -n["signal"]))
-              return on, nets
-
-
-          def bg(work, done):
-              def t():
-                  res = work()
-                  GLib.idle_add(done, res)
-              threading.Thread(target=t, daemon=True).start()
-
-
-          CSS = f"""
-          window {{ background: transparent; }}
-          * {{ font-family: monospace, "Font Awesome 6 Free", sans-serif; font-size: 14px; color: {TEXT}; }}
-          .card {{ background: {BG}; border: 5px solid {BG}; border-radius: 6px; padding: 8px; }}
-          .title {{ color: {GOLD}; font-weight: bold; }}
-          .sep {{ background: {BORDER}; min-height: 1px; margin: 6px 0; }}
-          button {{ background: transparent; border: none; box-shadow: none; text-shadow: none; padding: 6px 8px; border-radius: 4px; }}
-          button:hover {{ background: alpha({GOLD}, 0.18); }}
-          .row.active {{ background: {PILL}; }}
-          .bars {{ color: {GOLD}; }}
-          .dim {{ color: {DIM}; font-size: 12px; }}
-          .err {{ color: {ERR}; font-size: 12px; }}
-          entry {{ background: {PILL}; border: 1px solid {BORDER}; border-radius: 4px; padding: 4px 8px; box-shadow: none; }}
-          entry:focus {{ border-color: {GOLD}; }}
-          .connect {{ background: {GOLD}; }}
-          .connect label {{ color: {BG}; font-weight: bold; }}
-          .connect:hover {{ background: alpha({GOLD}, 0.8); }}
-          scrolledwindow undershoot, scrolledwindow overshoot {{ background: none; }}
-          """
-
-
-          class Popup(Gtk.Window):
-              def __init__(self):
-                  super().__init__()
-                  self.open_rev = None
-                  self._setting = False
-
-                  self.set_app_paintable(True)
-                  vis = self.get_screen().get_rgba_visual()
-                  if vis:
-                      self.set_visual(vis)
-
-                  GtkLayerShell.init_for_window(self)
-                  GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-                  GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
-                  GtkLayerShell.set_exclusive_zone(self, -1)
-                  for edge in (GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM,
-                               GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT):
-                      GtkLayerShell.set_anchor(self, edge, True)
-
-                  prov = Gtk.CssProvider()
-                  prov.load_from_data(CSS.encode())
-                  Gtk.StyleContext.add_provider_for_screen(
-                      Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_USER)
-
-                  # full-screen transparent root: clicking outside the card closes the popup
-                  root = Gtk.EventBox()
-                  root.set_visible_window(False)
-                  root.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-                  root.connect("button-press-event", self.on_root_click)
-                  self.add(root)
-
-                  self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                  self.card.get_style_context().add_class("card")
-                  self.card.set_size_request(WIDTH, -1)
-                  self.card.set_halign(Gtk.Align.END)
-                  self.card.set_valign(Gtk.Align.START)
-                  self.card.set_margin_top(TOP_MARGIN)
-                  self.card.set_margin_end(RIGHT_MARGIN)
-                  root.add(self.card)
-
-                  head = Gtk.Box(spacing=6)
-                  title = Gtk.Label(label="\uf1eb  Wi-Fi", xalign=0)
-                  title.get_style_context().add_class("title")
-                  head.pack_start(title, True, True, 4)
-                  refresh = Gtk.Button(label="\uf021")
-                  refresh.connect("clicked", lambda *_: self.refresh(True))
-                  head.pack_start(refresh, False, False, 0)
-                  self.switch = Gtk.Switch()
-                  self.switch.set_valign(Gtk.Align.CENTER)
-                  self.switch.connect("notify::active", self.on_switch)
-                  head.pack_start(self.switch, False, False, 4)
-                  self.card.pack_start(head, False, False, 0)
-
-                  sep = Gtk.Box(); sep.get_style_context().add_class("sep")
-                  self.card.pack_start(sep, False, False, 0)
-
-                  self.scroll = Gtk.ScrolledWindow()
-                  self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-                  self.scroll.set_propagate_natural_height(True)
-                  self.scroll.set_max_content_height(MAX_LIST_HEIGHT)
-                  self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                  self.list.pack_start(self.note("Scanning\u2026"), False, False, 8)   # shown instantly
-                  self.scroll.add(self.list)
-                  self.card.pack_start(self.scroll, False, False, 0)
-
-                  sep2 = Gtk.Box(); sep2.get_style_context().add_class("sep")
-                  self.card.pack_start(sep2, False, False, 0)
-                  foot = Gtk.Box()
-                  close = Gtk.Button(label="Close")
-                  close.connect("clicked", lambda *_: Gtk.main_quit())
-                  foot.pack_end(close, False, False, 0)
-                  self.card.pack_start(foot, False, False, 0)
-
-                  self.connect("key-press-event", self.on_key)
-                  self.connect("destroy", Gtk.main_quit)
-                  self.show_all()
-
-                  self.refresh(False)                       # cached list right away
-                  GLib.timeout_add(100, lambda: (self.refresh(True), False)[1])   # then a fresh scan
-
-              def on_key(self, _w, ev):
-                  if ev.keyval == Gdk.KEY_Escape:
-                      Gtk.main_quit()
-                      return True
-                  return False
-
-              def on_root_click(self, _w, ev):
-                  a = self.card.get_allocation()
-                  if not (a.x <= ev.x <= a.x + a.width and a.y <= ev.y <= a.y + a.height):
-                      Gtk.main_quit()
-                  return True
-
-              def on_switch(self, sw, _p):
-                  if self._setting:
-                      return
-                  want = sw.get_active()
-
-                  def work():
-                      if want:
-                          subprocess.run(["rfkill", "unblock", "wifi"], capture_output=True)
-                          run("radio", "wifi", "on")
-                          GLib.usleep(1500000)
-                          run("dev", "wifi", "rescan")
-                          GLib.usleep(1500000)
-                      else:
-                          run("radio", "wifi", "off")
-                      return get_networks()
-                  bg(work, self.populate)
-
-              def refresh(self, rescan):
-                  def work():
-                      if rescan:
-                          run("dev", "wifi", "rescan")
-                          GLib.usleep(2000000)          # give the scan a moment to finish
-                      return get_networks()
-                  bg(work, self.populate)
-
-              def populate(self, result):
-                  if self.open_rev is not None:   # don't wipe a password box while typing
-                      return
-                  on, nets = result
-                  self._setting = True
-                  self.switch.set_active(on)
-                  self._setting = False
-                  for c in self.list.get_children():
-                      self.list.remove(c)
-                  if not on:
-                      self.list.pack_start(self.note("Wi-Fi is turned off"), False, False, 8)
-                  elif not nets:
-                      self.list.pack_start(self.note("No networks found"), False, False, 8)
-                  for n in nets:
-                      self.list.pack_start(self.make_row(n), False, False, 0)
-                  self.list.show_all()
-
-              def note(self, text):
-                  l = Gtk.Label(label=text)
-                  l.get_style_context().add_class("dim")
-                  return l
-
-              def make_row(self, n):
-                  wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                  btn = Gtk.Button()
-                  ctx = btn.get_style_context()
-                  ctx.add_class("row")
-                  if n["active"]:
-                      ctx.add_class("active")
-                  box = Gtk.Box(spacing=10)
-                  bars = Gtk.Label(label="\u2582\u2584\u2586\u2588"[min(3, n["signal"] // 25)])
-                  bars.get_style_context().add_class("bars")
-                  box.pack_start(bars, False, False, 0)
-                  box.pack_start(Gtk.Label(label=n["ssid"], xalign=0, ellipsize=3), True, True, 0)
-                  if n["active"]:
-                      tag = Gtk.Label(label="connected")
-                      tag.get_style_context().add_class("dim")
-                      box.pack_end(tag, False, False, 0)
-                  elif n["secure"]:
-                      lock = Gtk.Label(label="\uf023")
-                      lock.get_style_context().add_class("dim")
-                      box.pack_end(lock, False, False, 0)
-                  btn.add(box)
-                  wrap.pack_start(btn, False, False, 0)
-
-                  # password / status area directly below this row
-                  rev = Gtk.Revealer()
-                  rev.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-                  rev.set_transition_duration(120)
-                  inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-                  inner.set_margin_start(8); inner.set_margin_end(8)
-                  inner.set_margin_top(4); inner.set_margin_bottom(6)
-                  erow = Gtk.Box(spacing=6)
-                  entry = Gtk.Entry()
-                  entry.set_visibility(False)
-                  entry.set_placeholder_text("Password")
-                  go = Gtk.Button(label="Connect")
-                  go.get_style_context().add_class("connect")
-                  erow.pack_start(entry, True, True, 0)
-                  erow.pack_start(go, False, False, 0)
-                  erow.set_no_show_all(True)     # hidden until a password is needed
-                  status = Gtk.Label(label="", xalign=0)
-                  status.get_style_context().add_class("dim")
-                  status.set_line_wrap(True)
-                  inner.pack_start(erow, False, False, 0)
-                  inner.pack_start(status, False, False, 0)
-                  rev.add(inner)
-                  wrap.pack_start(rev, False, False, 0)
-
-                  ui = dict(rev=rev, erow=erow, entry=entry, go=go, status=status)
-                  btn.connect("clicked", lambda *_: self.on_row(n, ui))
-                  entry.connect("activate", lambda *_: self.submit(n, ui))
-                  go.connect("clicked", lambda *_: self.submit(n, ui))
-                  return wrap
-
-              def show_password(self, ui):
-                  # GTK3 ignores show_all() on a no_show_all widget, so clear the flag first
-                  ui["erow"].set_no_show_all(False)
-                  ui["erow"].show_all()
-                  ui["entry"].grab_focus()
-
-              def on_row(self, n, ui):
-                  if n["active"]:
-                      return
-                  if self.open_rev is not None and self.open_rev is not ui["rev"]:
-                      self.open_rev.set_reveal_child(False)
-                  self.open_rev = ui["rev"]
-                  ui["status"].set_text("")
-                  ui["rev"].set_reveal_child(True)
-                  if n["secure"] and not n["saved"]:
-                      self.show_password(ui)
-                  else:
-                      self.connect_to(n, None, ui)
-
-              def submit(self, n, ui):
-                  pw = ui["entry"].get_text()
-                  if n["secure"] and len(pw) < 8:
-                      self.set_status(ui, "Password must be at least 8 characters", True)
-                      return
-                  self.connect_to(n, pw or None, ui)
-
-              def set_status(self, ui, text, err=False):
-                  ctx = ui["status"].get_style_context()
-                  ctx.remove_class("err"); ctx.remove_class("dim")
-                  ctx.add_class("err" if err else "dim")
-                  ui["status"].set_text(text)
-
-              def connect_to(self, n, pw, ui):
-                  self.set_status(ui, "Connecting\u2026")
-                  ui["entry"].set_sensitive(False)
-                  ui["go"].set_sensitive(False)
-
-                  def work():
-                      if pw and n["saved"]:
-                          run("con", "delete", "id", n["ssid"])   # replace the old saved password
-                      if pw:
-                          rc, out = run("dev", "wifi", "connect", n["ssid"], "password", pw)
-                      elif n["saved"]:
-                          rc, out = run("con", "up", "id", n["ssid"])
-                      else:
-                          rc, out = run("dev", "wifi", "connect", n["ssid"])
-                      if rc != 0:
-                          run("con", "delete", "id", n["ssid"])   # don't leave a broken profile
-                      return rc, out
-
-                  def done(res):
-                      rc, out = res
-                      if rc == 0:
-                          subprocess.Popen(["notify-send", "-t", "3000", "Wi-Fi", f"Connected to {n['ssid']}"])
-                          Gtk.main_quit()
-                          return
-                      ui["entry"].set_sensitive(True)
-                      ui["go"].set_sensitive(True)
-                      if n["secure"]:
-                          self.set_status(ui, "Could not connect. Check the password.", True)
-                          self.show_password(ui)
-                      else:
-                          self.set_status(ui, "Could not connect.", True)
-                  bg(work, done)
-
-
-          if __name__ == "__main__":
-              Popup()
-              Gtk.main()
-          WIFIPOPUP
 
           cat > "$CONF/hypr/volume.sh" <<'VOLUMESH'
           #!/bin/sh
-          # Click the volume in the bar: toggle the volume popup (volume-popup.py).
-          if pkill -f 'volume-popup.py'; then exit 0; fi
+          # Click the volume in the bar: toggle the volume popup (hypr-ui volume).
+          if pkill -f 'hypr-ui volume'; then exit 0; fi
           LIB=/usr/lib/libgtk-layer-shell.so
           [ -e "$LIB" ] || LIB=$(ls /usr/lib/libgtk-layer-shell.so* 2>/dev/null | head -n1)
-          LD_PRELOAD="$LIB" exec python3 "$HOME/.config/hypr/volume-popup.py"
+          LD_PRELOAD="$LIB" exec hypr-ui volume
           VOLUMESH
-
-          cat > "$CONF/hypr/volume-popup.py" <<'VOLUMEPOPUP'
-          #!/usr/bin/env python3
-          import json, os, re, subprocess, threading
-          from concurrent.futures import ThreadPoolExecutor
-          import gi
-          gi.require_version("Gtk", "3.0")
-          gi.require_version("Gdk", "3.0")
-          gi.require_version("GtkLayerShell", "0.1")
-          from gi.repository import Gtk, Gdk, GLib, GtkLayerShell
-
-          # placement: distance from the top-right corner of the screen
-          TOP_MARGIN = 52      # gap below the bar
-          RIGHT_MARGIN = 150   # increase to move the box left
-          WIDTH = 360
-          MAX_LIST_HEIGHT = 420
-          MAX_VOLUME = 100     # set to 150 to allow over-amplification
-
-          BG = "#282828"       # replaced by surface_container_high from colors.css if found
-          PILL = "#413D3A"
-          BORDER = "#514947"
-          GOLD = "#c7ab7a"
-          TEXT = "#ded8be"
-          DIM = "#ab9c88"
-          ERR = "#e07a6b"
-
-          try:
-              css_src = open(os.path.expanduser("~/.config/waybar/colors.css")).read()
-              m = re.search(r"@define-color\s+surface_container_high\s+(#[0-9a-fA-F]{6})", css_src)
-              if m:
-                  BG = m.group(1)
-          except OSError:
-              pass
-
-
-          def pactl(*args, timeout=5):
-              try:
-                  p = subprocess.run(["pactl", *args], capture_output=True, text=True, timeout=timeout)
-                  return p.returncode, p.stdout.strip()
-              except Exception as e:
-                  return 1, str(e)
-
-
-          def pactl_bg(*args):
-              """fire and forget"""
-              try:
-                  subprocess.Popen(["pactl", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-              except OSError:
-                  pass
-
-
-          def jlist(kind):
-              rc, out = pactl("-f", "json", "list", kind)
-              if rc != 0:
-                  return []
-              try:
-                  return json.loads(out)
-              except ValueError:
-                  return []
-
-
-          def vol_pct(d):
-              for v in (d.get("volume") or {}).values():
-                  try:
-                      return int(str(v.get("value_percent", "0%")).strip().rstrip("%"))
-                  except ValueError:
-                      return 0
-              return 0
-
-
-          def get_audio():
-              # all queries in parallel
-              with ThreadPoolExecutor(5) as ex:
-                  f_sinks = ex.submit(jlist, "sinks")
-                  f_srcs = ex.submit(jlist, "sources")
-                  f_inputs = ex.submit(jlist, "sink-inputs")
-                  f_dsink = ex.submit(pactl, "get-default-sink")
-                  f_dsrc = ex.submit(pactl, "get-default-source")
-                  sinks, srcs, inputs = f_sinks.result(), f_srcs.result(), f_inputs.result()
-                  dsink, dsrc = f_dsink.result()[1], f_dsrc.result()[1]
-
-              outs = [{"name": s["name"], "desc": s.get("description") or s["name"],
-                      "vol": vol_pct(s), "mute": bool(s.get("mute"))} for s in sinks]
-              ins = [{"name": s["name"], "desc": s.get("description") or s["name"],
-                      "vol": vol_pct(s), "mute": bool(s.get("mute"))}
-                    for s in srcs if not s["name"].endswith(".monitor")]
-              apps = []
-              for i in inputs:
-                  props = i.get("properties") or {}
-                  label = (props.get("application.name") or props.get("media.name")
-                          or i.get("name") or "Stream")
-                  apps.append({"id": str(i["index"]), "label": label,
-                              "vol": vol_pct(i), "mute": bool(i.get("mute"))})
-              return {"sinks": outs, "sources": ins, "apps": apps, "dsink": dsink, "dsrc": dsrc}
-
-
-          def bg(work, done):
-              def t():
-                  res = work()
-                  GLib.idle_add(done, res)
-              threading.Thread(target=t, daemon=True).start()
-
-
-          CSS = f"""
-          window {{ background: transparent; }}
-          * {{ font-family: monospace, "Font Awesome 6 Free", sans-serif; font-size: 14px; color: {TEXT}; }}
-          .card {{ background: {BG}; border: 5px solid {BG}; border-radius: 6px; padding: 8px; }}
-          .title {{ color: {GOLD}; font-weight: bold; }}
-          .section {{ color: {GOLD}; font-size: 12px; font-weight: bold; }}
-          .sep {{ background: {BORDER}; min-height: 1px; margin: 6px 0; }}
-          button {{ background: transparent; border: none; box-shadow: none; text-shadow: none; padding: 6px 8px; border-radius: 4px; }}
-          button:hover {{ background: alpha({GOLD}, 0.18); }}
-          .device.active {{ background: {PILL}; }}
-          .muted label {{ color: {ERR}; }}
-          .dim {{ color: {DIM}; font-size: 12px; }}
-          .pct {{ color: {DIM}; font-size: 12px; }}
-          scale trough {{ background: {PILL}; border: 1px solid {BORDER}; border-radius: 4px; min-height: 6px; }}
-          scale highlight {{ background: {GOLD}; border-radius: 4px; border: none; }}
-          scale slider {{ background: {TEXT}; border: none; box-shadow: none; border-radius: 8px; min-width: 14px; min-height: 14px; margin: -5px; }}
-          scale slider:hover {{ background: {GOLD}; }}
-          scale.muted highlight {{ background: {DIM}; }}
-          scrolledwindow undershoot, scrolledwindow overshoot {{ background: none; }}
-          """
-
-
-          class VolRow(Gtk.Box):
-              """mute button + label + slider + percentage"""
-
-              def __init__(self, popup, kind, ident, label, vol, mute, icons):
-                  super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-                  self.popup, self.kind, self.ident = popup, kind, ident
-                  self.icon_on, self.icon_off = icons
-                  self.mute = mute
-                  self._updating = False
-                  self._pending = None
-
-                  top = Gtk.Box(spacing=6)
-                  self.mbtn = Gtk.Button(label=self.icon_on)
-                  self.mbtn.connect("clicked", self.on_mute)
-                  top.pack_start(self.mbtn, False, False, 0)
-                  name = Gtk.Label(label=label, xalign=0, ellipsize=3)
-                  top.pack_start(name, True, True, 0)
-                  self.pct = Gtk.Label(label="0%")
-                  self.pct.get_style_context().add_class("pct")
-                  top.pack_end(self.pct, False, False, 4)
-                  self.pack_start(top, False, False, 0)
-
-                  self.scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, MAX_VOLUME, 1)
-                  self.scale.set_draw_value(False)
-                  self.scale.set_margin_start(10)
-                  self.scale.set_margin_end(10)
-                  self.scale.set_margin_bottom(6)
-                  self.scale.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK)
-                  self.scale.connect("button-press-event", self.on_press)
-                  self.scale.connect("button-release-event", self.on_release)
-                  self.scale.connect("value-changed", self.on_changed)
-                  self.pack_start(self.scale, False, False, 0)
-
-                  self.set_state(vol, mute)
-
-              def set_state(self, vol, mute):
-                  self._updating = True
-                  self.scale.set_value(vol)
-                  self._updating = False
-                  self.mute = mute
-                  self.pct.set_text(f"{vol}%")
-                  self.mbtn.set_label(self.icon_off if mute else self.icon_on)
-                  for w in (self.mbtn, self.scale):
-                      ctx = w.get_style_context()
-                      (ctx.add_class if mute else ctx.remove_class)("muted")
-
-              def on_press(self, *_):
-                  self.popup.dragging = True
-                  return False
-
-              def on_release(self, *_):
-                  self.popup.dragging = False
-                  return False
-
-              def on_changed(self, scale):
-                  v = int(scale.get_value())
-                  self.pct.set_text(f"{v}%")
-                  if self._updating:
-                      return
-                  if self._pending:
-                      GLib.source_remove(self._pending)
-                  self._pending = GLib.timeout_add(40, self.send, v)
-
-              def send(self, v):
-                  self._pending = None
-                  pactl_bg(f"set-{self.kind}-volume", self.ident, f"{v}%")
-                  return False
-
-              def on_mute(self, _b):
-                  pactl_bg(f"set-{self.kind}-mute", self.ident, "toggle")
-                  self.set_state(int(self.scale.get_value()), not self.mute)   # instant feedback
-                  self.popup.refresh_soon()
-
-
-          class Popup(Gtk.Window):
-              def __init__(self):
-                  super().__init__()
-                  self.dragging = False
-                  self.sig = None
-                  self.rows = {}
-
-                  self.set_app_paintable(True)
-                  vis = self.get_screen().get_rgba_visual()
-                  if vis:
-                      self.set_visual(vis)
-
-                  GtkLayerShell.init_for_window(self)
-                  GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-                  GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
-                  GtkLayerShell.set_exclusive_zone(self, -1)
-                  for edge in (GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM,
-                              GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT):
-                      GtkLayerShell.set_anchor(self, edge, True)
-
-                  prov = Gtk.CssProvider()
-                  prov.load_from_data(CSS.encode())
-                  Gtk.StyleContext.add_provider_for_screen(
-                      Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_USER)
-
-                  # full-screen transparent root: clicking outside the card closes the popup
-                  root = Gtk.EventBox()
-                  root.set_visible_window(False)
-                  root.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-                  root.connect("button-press-event", self.on_root_click)
-                  self.add(root)
-
-                  self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                  self.card.get_style_context().add_class("card")
-                  self.card.set_size_request(WIDTH, -1)
-                  self.card.set_halign(Gtk.Align.END)
-                  self.card.set_valign(Gtk.Align.START)
-                  self.card.set_margin_top(TOP_MARGIN)
-                  self.card.set_margin_end(RIGHT_MARGIN)
-                  root.add(self.card)
-
-                  head = Gtk.Box(spacing=6)
-                  title = Gtk.Label(label="\uf028  Volume", xalign=0)
-                  title.get_style_context().add_class("title")
-                  head.pack_start(title, True, True, 4)
-                  self.card.pack_start(head, False, False, 0)
-
-                  sep = Gtk.Box(); sep.get_style_context().add_class("sep")
-                  self.card.pack_start(sep, False, False, 0)
-
-                  self.scroll = Gtk.ScrolledWindow()
-                  self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-                  self.scroll.set_propagate_natural_height(True)
-                  self.scroll.set_max_content_height(MAX_LIST_HEIGHT)
-                  self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                  self.list.pack_start(self.note("Loading\u2026"), False, False, 8)
-                  self.scroll.add(self.list)
-                  self.card.pack_start(self.scroll, False, False, 0)
-
-                  sep2 = Gtk.Box(); sep2.get_style_context().add_class("sep")
-                  self.card.pack_start(sep2, False, False, 0)
-                  foot = Gtk.Box()
-                  close = Gtk.Button(label="Close")
-                  close.connect("clicked", lambda *_: Gtk.main_quit())
-                  foot.pack_end(close, False, False, 0)
-                  self.card.pack_start(foot, False, False, 0)
-
-                  self.connect("key-press-event", self.on_key)
-                  self.connect("destroy", Gtk.main_quit)
-                  self.show_all()
-
-                  self.refresh()
-                  GLib.timeout_add(1500, self.tick)     # keep in sync with changes made elsewhere
-
-              # ---------- events ----------
-              def on_key(self, _w, ev):
-                  if ev.keyval == Gdk.KEY_Escape:
-                      Gtk.main_quit()
-                      return True
-                  return False
-
-              def on_root_click(self, _w, ev):
-                  a = self.card.get_allocation()
-                  if not (a.x <= ev.x <= a.x + a.width and a.y <= ev.y <= a.y + a.height):
-                      Gtk.main_quit()
-                  return True
-
-              def tick(self):
-                  if not self.dragging:
-                      self.refresh()
-                  return True
-
-              def refresh_soon(self):
-                  GLib.timeout_add(200, lambda: (self.refresh(), False)[1])
-
-              def refresh(self):
-                  bg(get_audio, self.apply)
-
-              # ---------- building ----------
-              def note(self, text):
-                  l = Gtk.Label(label=text)
-                  l.get_style_context().add_class("dim")
-                  return l
-
-              def section(self, text):
-                  l = Gtk.Label(label=text.upper(), xalign=0)
-                  l.get_style_context().add_class("section")
-                  l.set_margin_start(8)
-                  l.set_margin_top(8)
-                  l.set_margin_bottom(2)
-                  return l
-
-              def apply(self, d):
-                  if self.dragging:
-                      return
-                  sig = (d["dsink"], d["dsrc"],
-                        tuple(s["name"] for s in d["sinks"]),
-                        tuple(s["name"] for s in d["sources"]),
-                        tuple((a["id"], a["label"]) for a in d["apps"]))
-                  if sig != self.sig:
-                      self.sig = sig
-                      self.rebuild(d)
-                  else:
-                      # same layout: just update values in place (keeps focus and avoids flicker)
-                      for key, row in self.rows.items():
-                          kind, ident = key
-                          src = {"sink": d["sinks"], "source": d["sources"]}.get(kind)
-                          if kind == "sink-input":
-                              item = next((a for a in d["apps"] if a["id"] == ident), None)
-                          else:
-                              item = next((s for s in src if s["name"] == ident), None)
-                          if item:
-                              row.set_state(item["vol"], item["mute"])
-
-              def rebuild(self, d):
-                  for c in self.list.get_children():
-                      self.list.remove(c)
-                  self.rows = {}
-
-                  sinks, sources = d["sinks"], d["sources"]
-                  cur = next((s for s in sinks if s["name"] == d["dsink"]), sinks[0] if sinks else None)
-                  cur_src = next((s for s in sources if s["name"] == d["dsrc"]), sources[0] if sources else None)
-
-                  # output
-                  self.list.pack_start(self.section("Output"), False, False, 0)
-                  if cur:
-                      r = VolRow(self, "sink", cur["name"], cur["desc"], cur["vol"], cur["mute"],
-                                ("\uf028", "\uf6a9"))
-                      self.rows[("sink", cur["name"])] = r
-                      self.list.pack_start(r, False, False, 0)
-                  else:
-                      self.list.pack_start(self.note("No output device"), False, False, 6)
-                  if len(sinks) > 1:
-                      for s in sinks:
-                          self.list.pack_start(self.device_button(s, s["name"] == (cur or {}).get("name")),
-                                              False, False, 0)
-
-                  # input
-                  if cur_src:
-                      self.list.pack_start(self.section("Input"), False, False, 0)
-                      r = VolRow(self, "source", cur_src["name"], cur_src["desc"], cur_src["vol"],
-                                cur_src["mute"], ("\uf130", "\uf131"))
-                      self.rows[("source", cur_src["name"])] = r
-                      self.list.pack_start(r, False, False, 0)
-
-                  # apps
-                  self.list.pack_start(self.section("Applications"), False, False, 0)
-                  if not d["apps"]:
-                      self.list.pack_start(self.note("Nothing is playing"), False, False, 6)
-                  for a in d["apps"]:
-                      r = VolRow(self, "sink-input", a["id"], a["label"], a["vol"], a["mute"],
-                                ("\uf028", "\uf6a9"))
-                      self.rows[("sink-input", a["id"])] = r
-                      self.list.pack_start(r, False, False, 0)
-
-                  self.list.show_all()
-
-              def device_button(self, s, active):
-                  btn = Gtk.Button()
-                  ctx = btn.get_style_context()
-                  ctx.add_class("device")
-                  if active:
-                      ctx.add_class("active")
-                  box = Gtk.Box(spacing=8)
-                  mark = Gtk.Label(label="\uf00c" if active else " ")
-                  mark.get_style_context().add_class("dim")
-                  box.pack_start(mark, False, False, 0)
-                  box.pack_start(Gtk.Label(label=s["desc"], xalign=0, ellipsize=3), True, True, 0)
-                  btn.add(box)
-                  btn.connect("clicked", lambda *_: self.set_default(s["name"]))
-                  return btn
-
-              def set_default(self, name):
-                  def work():
-                      pactl("set-default-sink", name)
-                      # move playing streams to the new device too
-                      for i in jlist("sink-inputs"):
-                          pactl("move-sink-input", str(i["index"]), name)
-                      return get_audio()
-                  self.sig = None
-                  bg(work, self.apply)
-
-
-          if __name__ == "__main__":
-              Popup()
-              Gtk.main()
-          VOLUMEPOPUP
 
           cat > "$CONF/hypr/launcher.sh" <<'LAUNCHERSH'
           #!/bin/sh
@@ -2860,9 +1379,8 @@ jobs:
           #!/bin/sh
           # New random wallpaper (seed = current time). Runs at login and on Super+Shift+W.
           # The old image is replaced, so only one copy ever exists.
-          GEN=/usr/share/cachyos-hyprland/genwall.py
           W="$HOME/.config/hypr/wallpaper.png"
-          if python3 "$GEN" png "$W.new" 2>/dev/null; then mv -f "$W.new" "$W"; else rm -f "$W.new"; fi
+          if hypr-helper genwall png "$W.new" 2>/dev/null; then mv -f "$W.new" "$W"; else rm -f "$W.new"; fi
           rm -f "$HOME"/.config/hypr/wallpaper-custom.*
           pkill -x swaybg 2>/dev/null
           setsid -f swaybg -i "$W" -m fill >/dev/null 2>&1
@@ -2886,7 +1404,7 @@ jobs:
           cat > "$CONF/hypr/ws-state.sh" <<'WSSTATE'
           #!/bin/sh
           # ws-state.sh N -> JSON for the bar button of workspace N (class: active / occupied / empty).
-          # State file is written by ws-daemon.py; without it workspace 1 counts as active.
+          # State file is written by `hypr-helper ws-daemon`; without it workspace 1 counts as active.
           n="${1:-1}"
           active=1
           occ=""
@@ -2914,105 +1432,6 @@ jobs:
           exit 0
           WSGO
 
-          cat > "$CONF/hypr/ws-daemon.py" <<'WSDAEMON'
-          #!/usr/bin/env python3
-          # Keeps the bar's 1-2-3-4 workspace buttons in sync. Listens to Hyprland's event
-          # socket, writes the state to $XDG_RUNTIME_DIR/ws-state and pokes waybar
-          # (signal 8) only when something changed. ws-state.sh reads that file.
-          import glob, json, os, socket, subprocess, time
-
-          RT = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
-          STATE = os.path.join(RT, "ws-state")
-          EVENTS = {"workspace", "workspacev2", "createworkspace", "createworkspacev2",
-                    "destroyworkspace", "destroyworkspacev2", "openwindow", "closewindow",
-                    "movewindow", "movewindowv2", "moveworkspace", "moveworkspacev2",
-                    "focusedmon", "focusedmonv2"}
-
-
-          def hc(what):
-              out = subprocess.run(["hyprctl", "-j", what], capture_output=True, text=True, timeout=3).stdout
-              return json.loads(out)
-
-
-          def waybar_ready():
-              # An RT signal sent to a waybar that is still starting up kills it, so only
-              # signal one that has been running for a few seconds.
-              for _ in range(8):
-                  try:
-                      out = subprocess.run(["ps", "-o", "etimes=", "-C", "waybar"],
-                                           capture_output=True, text=True, timeout=2).stdout.split()
-                  except Exception:
-                      return False
-                  if not out:
-                      return False
-                  if min(int(x) for x in out) >= 3:
-                      return True
-                  time.sleep(0.5)
-              return False
-
-
-          def update(last):
-              try:
-                  active = int(hc("activeworkspace")["id"])
-                  occ = sorted({int(w["id"]) for w in hc("workspaces") if w.get("windows", 0) > 0})
-              except Exception:
-                  return last
-              text = 'active=%d\nocc=" %s "\n' % (active, " ".join(map(str, occ)))
-              if text == last:
-                  return last
-              tmp = STATE + ".tmp"
-              with open(tmp, "w") as f:
-                  f.write(text)
-              os.replace(tmp, STATE)
-              if waybar_ready():
-                  subprocess.run(["pkill", "-RTMIN+8", "waybar"])
-              return text
-
-
-          def sock_path():
-              sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
-              cands = [os.path.join(RT, "hypr", sig, ".socket2.sock")] if sig else []
-              cands += sorted(glob.glob(os.path.join(RT, "hypr", "*", ".socket2.sock")),
-                              key=os.path.getmtime, reverse=True)
-              for c in cands:
-                  if os.path.exists(c):
-                      return c
-              return None
-
-
-          def main():
-              path = None
-              for _ in range(20):
-                  path = sock_path()
-                  if path:
-                      break
-                  time.sleep(0.5)
-              if not path:
-                  return
-              s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-              s.connect(path)
-              last, buf, dirty = "", b"", True
-              while True:
-                  s.settimeout(0.08 if dirty else None)   # wait for a burst of events to settle
-                  try:
-                      data = s.recv(4096)
-                  except socket.timeout:
-                      last = update(last)
-                      dirty = False
-                      continue
-                  if not data:
-                      return
-                  buf += data
-                  *lines, buf = buf.split(b"\n")
-                  for line in lines:
-                      if line.split(b">>", 1)[0].decode("ascii", "ignore") in EVENTS:
-                          dirty = True
-
-
-          if __name__ == "__main__":
-              main()
-          WSDAEMON
-
           # ---- Brave: quiet new tab page (no sponsored images, widgets, news) ----
           # Plain Brave, no custom launcher or wallpaper page.
           cat > "$CONF/BraveSoftware/Brave-Browser/Default/Preferences" <<'BRAVEPREFS'
@@ -3039,81 +1458,25 @@ jobs:
           BRAVEPREFS
 
           # ---- Brave: a new random wallpaper for every new tab ----
-          # brave-wall.sh makes one picture with genwall.py and puts it in Brave's
+          # brave-wall.sh makes one picture with `hypr-helper genwall` and puts it in Brave's
           # sanitized_background_images folder (replacing the old one, so only one exists).
-          # It runs at login, on Super+Shift+W, when Brave starts, and (brave-wall-watch.py) every
+          # It runs at login, on Super+Shift+W, when Brave starts, and (`hypr-helper brave-wall-watch`) every
           # time Brave opens the picture for a new tab, so the next new tab shows a fresh one.
           cat > "$CONF/hypr/brave-wall.sh" <<'BRAVEWALLSH'
           #!/bin/sh
           # New random picture for Brave's new tab page. Replaces every picture in the folder.
           D="$HOME/.config/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
-          GEN=/usr/share/cachyos-hyprland/genwall.py
           mkdir -p "$D"
           found=0
           for f in "$D"/*; do
             [ -f "$f" ] || continue
             case "$f" in *.tmp) rm -f "$f"; continue ;; esac
             found=1
-            python3 "$GEN" png "$f" 2>/dev/null   # written to .tmp, then moved over the old file
+            hypr-helper genwall png "$f" 2>/dev/null   # written to .tmp, then moved over the old file
           done
-          [ "$found" = 1 ] || python3 "$GEN" png "$D/background.png" 2>/dev/null
+          [ "$found" = 1 ] || hypr-helper genwall png "$D/background.png" 2>/dev/null
           exit 0
           BRAVEWALLSH
-
-          cat > "$CONF/hypr/brave-wall-watch.py" <<'BRAVEWATCH'
-          #!/usr/bin/env python3
-          """Make a new Brave wallpaper every time a new tab opens.
-
-          Brave opens the picture in sanitized_background_images each time it shows a new tab page.
-          This watches that folder (inotify) and, after each open, swaps the picture for a new random
-          one with brave-wall.sh, so the next new tab looks different. The old picture is replaced.
-          """
-          import ctypes, ctypes.util, os, struct, subprocess, time
-
-          D = os.path.expanduser("~/.config/BraveSoftware/Brave-Browser/Default/sanitized_background_images")
-          SCRIPT = os.path.expanduser("~/.config/hypr/brave-wall.sh")
-          IN_OPEN = 0x20
-          EVT = struct.Struct("iIII")
-
-
-          def main():
-              libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
-              fd = libc.inotify_init()
-              if fd < 0:
-                  return
-              wd = -1
-              while True:
-                  if wd < 0:
-                      if os.path.isdir(D):
-                          wd = libc.inotify_add_watch(fd, D.encode(), IN_OPEN)
-                      if wd < 0:
-                          time.sleep(5)
-                          continue
-                  data = os.read(fd, 4096)
-                  i, new_tab = 0, False
-                  while i + EVT.size <= len(data):
-                      _, _, _, ln = EVT.unpack_from(data, i)
-                      name = data[i + EVT.size:i + EVT.size + ln].split(b"\0", 1)[0]
-                      i += EVT.size + ln
-                      if name and not name.endswith(b".tmp"):
-                          new_tab = True
-                  if new_tab:
-                      time.sleep(1.0)                      # let Brave finish reading the current picture
-                      subprocess.run(["sh", SCRIPT], check=False)
-                      time.sleep(0.5)
-                      # drop the opens caused by Brave noticing the new file, so one tab = one picture
-                      os.set_blocking(fd, False)
-                      try:
-                          while os.read(fd, 4096):
-                              pass
-                      except BlockingIOError:
-                          pass
-                      os.set_blocking(fd, True)
-
-
-          if __name__ == "__main__":
-              main()
-          BRAVEWATCH
 
           mkdir -p "$AIROOT/usr/local/bin"
           cat > "$AIROOT/usr/local/bin/brave" <<'BRAVEWRAP'
@@ -3234,7 +1597,7 @@ jobs:
           # switchxkblayout keeps the full layout list; re-setting input:kb_layout would
           # drop the other layouts after the first press and break the cycle and the bar.
           hyprctl switchxkblayout all next >/dev/null
-          cur=$(hyprctl devices -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((k.get("active_keymap", "") for k in d["keyboards"] if k.get("main")), ""))' 2>/dev/null)
+          cur=$(hypr-helper kb-name 2>/dev/null)
           notify-send -t 2000 "Keyboard: ${cur:-layout switched}"
           KBSWITCH
 
@@ -4645,11 +3008,11 @@ jobs:
                 WAYLAND_DISPLAY="$wl" DBUS_SESSION_BUS_ADDRESS="unix:path=$rt/bus" "$@"
             }
             as_user hyprctl reload >/dev/null 2>&1
-            pkill -u "$LIVE_UID" -f ws-daemon.py 2>/dev/null
+            pkill -u "$LIVE_UID" -f 'hypr-helper ws-daemon' 2>/dev/null
             pkill -u "$LIVE_UID" -x waybar 2>/dev/null
             sleep 0.5
             as_user setsid -f waybar >/dev/null 2>&1
-            as_user setsid -f sh -c 'sleep 3; exec python3 ~/.config/hypr/ws-daemon.py' >/dev/null 2>&1
+            as_user setsid -f sh -c 'sleep 3; exec hypr-helper ws-daemon' >/dev/null 2>&1
             as_user makoctl reload >/dev/null 2>&1
             return 0
           }
@@ -4778,7 +3141,7 @@ jobs:
           if grep -qF 'sign_with_key $f' cachyos/util-iso.sh; then
             echo "VERIFY FAIL: signing call still present in util-iso.sh" >&2; fail=1
           fi
-          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/ws-daemon.py etc/skel/.config/hypr/brave-wall.sh etc/skel/.config/hypr/brave-wall-watch.py usr/share/cachyos-hyprland/genwall.py etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences; do
+          for f in etc/greetd/config.toml etc/greetd/hypr-session.sh etc/skel/.config/hypr/hyprland.lua etc/skel/.config/hypr/palette.sh etc/skel/.config/hypr/screenshot.sh etc/skel/.config/waybar/config.jsonc etc/skel/.config/waybar/style.css etc/skel/.config/kitty/kitty.conf etc/skel/.config/fish/config.fish etc/skel/.config/hypr/power.sh etc/skel/.config/wofi/config etc/skel/.config/wofi/style.css etc/skel/.config/waybar/colors.css etc/skel/.config/kitty/colors.conf etc/skel/.config/matugen/config.toml etc/skel/.config/btop/btop.conf etc/skel/.config/brave-flags.conf etc/motd usr/share/cachyos-hyprland/cheatsheet.txt etc/skel/.config/hypr/hypridle.conf etc/skel/.config/hypr/hyprlock.conf etc/skel/.config/mako/config etc/systemd/journald.conf.d/50-live-cap.conf etc/systemd/coredump.conf.d/50-live-none.conf etc/pacman.d/hooks/zz-live-clean-cache.hook etc/skel/.config/hypr/wallpaper.sh etc/skel/.config/hypr/ws-state.sh etc/skel/.config/hypr/ws-go.sh etc/skel/.config/hypr/brave-wall.sh usr/bin/hypr-helper usr/bin/hypr-ui etc/skel/.config/hypr/popups.conf etc/skel/.config/hypr/popup-user.css etc/skel/.config/BraveSoftware/Brave-Browser/Default/Preferences; do
             [ -s "cachyos/archiso/airootfs/$f" ] || { echo "VERIFY FAIL: missing/empty airootfs/$f" >&2; fail=1; }
           done
           [ -s cachyos/archiso/README.txt ] \
@@ -4807,9 +3170,19 @@ jobs:
             echo "VERIFY FAIL: Super+Alt+Space is not bound to kb-switch.sh" >&2; fail=1
           fi
           R=cachyos/archiso/airootfs/etc/skel/.config
-          if ! grep -q 'ws-daemon\.py' "$R/hypr/hyprland.lua"; then
-            echo "VERIFY FAIL: hyprland.lua does not start ws-daemon.py" >&2; fail=1
+          if ! grep -q 'hypr-helper ws-daemon' "$R/hypr/hyprland.lua"; then
+            echo "VERIFY FAIL: hyprland.lua does not start hypr-helper ws-daemon" >&2; fail=1
           fi
+          if ! grep -q 'hypr-helper brave-wall-watch' "$R/hypr/hyprland.lua"; then
+            echo "VERIFY FAIL: hyprland.lua does not start hypr-helper brave-wall-watch" >&2; fail=1
+          fi
+          if grep -rq 'genwall\.py\|ws-daemon\.py\|brave-wall-watch\.py' cachyos/archiso/airootfs/etc cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
+            echo "VERIFY FAIL: leftover reference to a removed Python helper" >&2; fail=1
+          fi
+          while IFS= read -r pd; do
+            grep -q 'usr/bin/hypr-helper' "$pd" \
+              || { echo "VERIFY FAIL: hypr-helper has no file_permissions entry in $pd" >&2; fail=1; }
+          done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
           if grep -q 'for i = 1, 9' "$R/hypr/hyprland.lua" || ! grep -q 'for i = 1, 4 do' "$R/hypr/hyprland.lua"; then
             echo "VERIFY FAIL: workspace binds must cover 1-4 only" >&2; fail=1
           fi
@@ -4828,9 +3201,10 @@ jobs:
           for j in "$R/BraveSoftware/Brave-Browser/Default/Preferences"; do
             python3 -m json.tool "$j" >/dev/null || { echo "VERIFY FAIL: $j is not valid JSON" >&2; fail=1; }
           done
-          for py in "$R/hypr/ws-daemon.py" "$R/hypr/brave-wall-watch.py" "$R/hypr/wifi-popup.py" "$R/hypr/volume-popup.py" "$R/hypr/power-popup.py" "$R/hypr/clipboard-popup.py" cachyos/archiso/airootfs/usr/share/cachyos-hyprland/genwall.py; do
-            python3 -m py_compile "$py" || { echo "VERIFY FAIL: $py has a Python syntax error" >&2; fail=1; }
-          done
+          if grep -rqE 'python3?[ "]|\.py\b' "$R" cachyos/archiso/airootfs/usr/share/cachyos-hyprland cachyos/archiso/airootfs/usr/local/bin 2>/dev/null; then
+            grep -rnE 'python3?[ "]|\.py\b' "$R" cachyos/archiso/airootfs/usr/share/cachyos-hyprland cachyos/archiso/airootfs/usr/local/bin 2>/dev/null >&2
+            echo "VERIFY FAIL: a shipped script still uses Python" >&2; fail=1
+          fi
           if grep -rq 'brave-launch\|cachyos-wall' cachyos/archiso/airootfs/etc cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
             echo "VERIFY FAIL: leftover Brave wallpaper/launcher reference" >&2; fail=1
           fi

@@ -1,0 +1,18 @@
+[package]
+name = "hypr-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Small helpers for the CachyOS Hyprland ISO: wallpaper generator, workspace daemon, Brave wallpaper watcher"
+
+[dependencies]
+# Pure-Rust zlib, only used to compress the wallpaper PNG.
+miniz_oxide = "0.8"
+# JSON from hyprctl (popup-pos, kb-name)
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

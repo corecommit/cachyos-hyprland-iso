@@ -1,0 +1,18 @@
+[package]
+name = "hypr-ui"
+version = "0.1.0"
+edition = "2021"
+description = "GTK3 layer-shell popups for the CachyOS Hyprland ISO: wifi, volume, power, clipboard"
+
+[dependencies]
+# GTK3 bindings. They compile against the GTK3 headers in the builder; the ISO only
+# needs the gtk3 and gtk-layer-shell packages it already ships.
+gtk = { version = "0.18", features = ["v3_24"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
