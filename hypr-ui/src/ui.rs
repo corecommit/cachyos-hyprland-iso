@@ -38,37 +38,37 @@ struct LayerShell {
     anchor: WinFnII,
 }
 
-fn layer_shell() -> Option<LayerShell> {
+/// The C API is named gtk_layer_* (gtk_layer_init_for_window, ...). The gtk_layer_shell_*
+/// spelling is kept as a fallback for other versions.
+fn layer_shell() -> Result<LayerShell, String> {
     unsafe {
         let mut h: *mut c_void = std::ptr::null_mut();
         for name in ["libgtk-layer-shell.so.0", "libgtk-layer-shell.so"] {
-            let c = CString::new(name).ok()?;
+            let c = CString::new(name).map_err(|e| e.to_string())?;
             h = dlopen(c.as_ptr(), 2); // RTLD_NOW
             if !h.is_null() {
                 break;
             }
         }
         if h.is_null() {
-            return None;
+            return Err("libgtk-layer-shell could not be loaded".to_string());
         }
-        let sym = |n: &str| -> *mut c_void {
-            let c = CString::new(n).unwrap();
-            dlsym(h, c.as_ptr())
+        let find = |what: &str| -> Result<*mut c_void, String> {
+            for prefix in ["gtk_layer_", "gtk_layer_shell_"] {
+                let c = CString::new(format!("{prefix}{what}")).map_err(|e| e.to_string())?;
+                let p = dlsym(h, c.as_ptr());
+                if !p.is_null() {
+                    return Ok(p);
+                }
+            }
+            Err(format!("libgtk-layer-shell has no function gtk_layer_{what}"))
         };
-        let init = sym("gtk_layer_shell_init_for_window");
-        let layer = sym("gtk_layer_shell_set_layer");
-        let kb = sym("gtk_layer_shell_set_keyboard_mode");
-        let zone = sym("gtk_layer_shell_set_exclusive_zone");
-        let anchor = sym("gtk_layer_shell_set_anchor");
-        if [init, layer, kb, zone, anchor].iter().any(|p| p.is_null()) {
-            return None;
-        }
-        Some(LayerShell {
-            init: std::mem::transmute::<*mut c_void, WinFn>(init),
-            set_layer: std::mem::transmute::<*mut c_void, WinFnI>(layer),
-            keyboard: std::mem::transmute::<*mut c_void, WinFnI>(kb),
-            zone: std::mem::transmute::<*mut c_void, WinFnI>(zone),
-            anchor: std::mem::transmute::<*mut c_void, WinFnII>(anchor),
+        Ok(LayerShell {
+            init: std::mem::transmute::<*mut c_void, WinFn>(find("init_for_window")?),
+            set_layer: std::mem::transmute::<*mut c_void, WinFnI>(find("set_layer")?),
+            keyboard: std::mem::transmute::<*mut c_void, WinFnI>(find("set_keyboard_mode")?),
+            zone: std::mem::transmute::<*mut c_void, WinFnI>(find("set_exclusive_zone")?),
+            anchor: std::mem::transmute::<*mut c_void, WinFnII>(find("set_anchor")?),
         })
     }
 }
@@ -139,7 +139,7 @@ pub fn shell(css: &str, card_w: i32, card_h: i32) -> Shell {
     let stash = ToGlibPtr::<*mut gtk::ffi::GtkWindow>::to_glib_none(&win);
     let p: *mut gtk::ffi::GtkWindow = stash.0;
     match layer_shell() {
-        Some(ls) => unsafe {
+        Ok(ls) => unsafe {
             (ls.init)(p);
             (ls.set_layer)(p, 3); // OVERLAY
             (ls.keyboard)(p, 1); // EXCLUSIVE
@@ -148,7 +148,7 @@ pub fn shell(css: &str, card_w: i32, card_h: i32) -> Shell {
                 (ls.anchor)(p, edge, 1);
             }
         },
-        None => eprintln!("hypr-ui: libgtk-layer-shell not found; the popup will be a normal window"),
+        Err(e) => eprintln!("hypr-ui: {e}; the popup will be a normal window"),
     }
 
     load_css(&paint(css), gtk::STYLE_PROVIDER_PRIORITY_USER);
