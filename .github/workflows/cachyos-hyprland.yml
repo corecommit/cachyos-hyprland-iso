@@ -39,20 +39,20 @@ env:
   UPSTREAM_PIN: ""
 
 jobs:
-  build-cachyos-hyprland:
+  prepare:
+    # Resolves the version/tag/release flags once per run, runs the Python/Rust
+    # parity guard and (when releasing) creates the GitHub Release BEFORE the two
+    # matrix variants start, so they never race to create it: each variant only
+    # uploads its own ISO to the one release. The finish job writes the notes.
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 15
     permissions:
-      contents: write   # needed by the release step
-    container:
-      image: archlinux:base-devel
-      # The -v mounts expose big preinstalled host toolchains so the
-      # "Free host disk space" step can delete them.
-      options: >-
-        --privileged
-        -v /usr/local/lib/android:/host/android
-        -v /usr/share/dotnet:/host/dotnet
-
+      contents: write   # creates the release
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release: ${{ steps.meta.outputs.release }}
+      tag: ${{ steps.meta.outputs.tag }}
+      release_name: ${{ steps.meta.outputs.release_name }}
     steps:
       - name: Resolve version and release settings
         id: meta
@@ -81,21 +81,126 @@ jobs:
             echo "version=$version"
             echo "release=$release"
             echo "tag=$tag"
-            echo "iso_name=cachyos-hyprland-${version}-x86_64.iso"
             echo "release_name=CachyOS Hyprland ISO v${version}"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### Version ${version}"
             echo ""
-            echo "- ISO file: \`cachyos-hyprland-${version}-x86_64.iso\`"
+            echo "- ISO files: \`cachyos-hyprland-${version}-rust-x86_64.iso\` (Rust flavour) and \`cachyos-hyprland-${version}-python-x86_64.iso\` (Python flavour)"
             if [ "$release" = "true" ]; then
               echo "- Release: **yes**, tag \`${tag}\`"
             else
-              echo "- Release: **no** (artifact only)"
+              echo "- Release: **no** (artifacts only)"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fetch CHANGELOG.md and Rust sources
+      # The Python flavour exists so a change can still ship in Python while the
+      # Rust port catches up. Nothing can translate Python to Rust automatically,
+      # so a python-ui-only change means someone must port it BY HAND; warn when
+      # the Python tree was changed more recently than either Rust crate, so the
+      # gap is noticed instead of quietly shipping two different behaviours.
+      - name: Full checkout for the parity guard
+        uses: actions/checkout@v4
+        with:
+          path: repo-full
+          fetch-depth: 0   # full history: compares the last commit that touched each tree
+      - name: Parity guard (python-ui newer than the Rust crates)
+        run: |
+          set -euo pipefail
+          ts() { git -C repo-full log -1 --format=%ct -- "$1" 2>/dev/null | head -n1 || true; }
+          py=$(ts python-ui);  py=${py:-0}
+          ui=$(ts hypr-ui);    ui=${ui:-0}
+          helper=$(ts hypr-helper); helper=${helper:-0}
+          echo "last commit times: python-ui=${py} hypr-ui=${ui} hypr-helper=${helper}"
+          if [ "$py" -gt "$ui" ] || [ "$py" -gt "$helper" ]; then
+            echo "::warning::python-ui/ was changed more recently than hypr-ui/ or hypr-helper/. The Python flavour got a change the Rust flavour does not have: nothing can translate Python to Rust automatically, so port it to the Rust crates by hand, or the Rust ISO keeps the old behaviour."
+          else
+            echo "parity guard: python-ui is not newer than the Rust crates"
+          fi
+
+      - name: Create the release (the finish job fills in the notes)
+        if: steps.meta.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ inputs.prerelease == true }}
+          # Placeholder body; the marker line is replaced by the finish job with
+          # the real notes once the ISOs are attached. generate_release_notes
+          # appends GitHub's own "What's Changed" section after it; that part is
+          # kept when the notes are written.
+          body: '<!-- cachyos-notes-placeholder -->Notes are written when the build finishes.'
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-cachyos-hyprland:
+    needs: prepare
+    strategy:
+      # rust   = what this workflow has built since 1.2.1 (Rust popups + helpers).
+      # python = the same ISO, but the popups and helpers are the old Python
+      # programs (python-ui/), reached through wrappers that keep the same
+      # /usr/bin/hypr-ui and /usr/bin/hypr-helper commands, so the shipped
+      # scripts — bar, keybinds, save-progress, updateos, everything else — are
+      # byte-identical between the two flavours.
+      # fail-fast: one variant failing must not stop the other from building
+      # and releasing its ISO.
+      fail-fast: false
+      matrix:
+        variant: [rust, python]
+    env:
+      # The install, package-list, airootfs and verify steps branch on this.
+      VARIANT: ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: write   # needed by the release upload step
+    outputs:
+      # Only same-value data leaves the matrix: both legs clone the same upstream
+      # commit and write the same sha. Per-variant ISO data does NOT come out this
+      # way — with a matrix, job outputs are the last leg's evaluation, so an
+      # iso_<variant> key from one leg would be clobbered by the other leg's
+      # empty value. The finish job instead reads per-variant facts straight from
+      # the release assets and the run's jobs/artifacts via the API.
+      upstream_sha: ${{ steps.report.outputs.upstream_sha }}
+    container:
+      image: archlinux:base-devel
+      # The -v mounts expose big preinstalled host toolchains so the
+      # "Free host disk space" step can delete them.
+      options: >-
+        --privileged
+        -v /usr/local/lib/android:/host/android
+        -v /usr/share/dotnet:/host/dotnet
+
+    steps:
+      - name: Resolve per-variant settings
+        id: meta
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE: ${{ needs.prepare.outputs.release }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
+        run: |
+          set -euo pipefail
+          # iso_name carries the variant: cachyos-hyprland-<version>-<variant>-x86_64.iso
+          # (the "Rename ISO" step and the summary use it). The rest is passed
+          # through from the prepare job so later steps keep reading
+          # steps.meta.outputs.* exactly as before.
+          {
+            echo "version=$VERSION"
+            echo "release=$RELEASE"
+            echo "tag=$TAG"
+            echo "release_name=$RELEASE_NAME"
+            echo "iso_name=cachyos-hyprland-${VERSION}-${VARIANT}-x86_64.iso"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Variant: ${VARIANT}"
+            echo ""
+            echo "- ISO file: \`cachyos-hyprland-${VERSION}-${VARIANT}-x86_64.iso\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch CHANGELOG.md, the Rust crates and the Python flavour
         uses: actions/checkout@v4
         with:
           path: repo-src
@@ -103,6 +208,7 @@ jobs:
             CHANGELOG.md
             hypr-helper
             hypr-ui
+            python-ui
           fetch-depth: 1
 
       - name: Free host disk space
@@ -135,7 +241,18 @@ jobs:
 
       - name: Install Base Build Dependencies
         run: |
-          pacman -Syu --noconfirm archiso mkinitcpio-archiso git squashfs-tools grub syslinux python lua pacman-contrib rust gtk3 gtk-layer-shell
+          set -euo pipefail
+          # python stays in the builder for both variants: the workflow's own
+          # XML/JSON checks and (python flavour) the build-time wallpaper use
+          # it. rust and the gtk3/gtk-layer-shell headers are only needed to
+          # BUILD the Rust binaries, which only the rust variant does — the
+          # python flavour compiles nothing here.
+          pkgs="archiso mkinitcpio-archiso git squashfs-tools grub syslinux python lua pacman-contrib"
+          if [ "$VARIANT" = "rust" ]; then
+            pkgs="$pkgs rust gtk3 gtk-layer-shell"
+          fi
+          echo "installing for ${VARIANT}: $pkgs"
+          pacman -Syu --noconfirm $pkgs
 
       - name: Install patch helper
         run: |
@@ -201,7 +318,9 @@ jobs:
       # hypr-helper: wallpaper generator, workspace daemon, Brave wallpaper watcher and two tiny
       # hyprctl tools (no GTK). hypr-ui: the Wi-Fi / volume / power / clipboard popups (GTK3).
       # Both are built here in the builder container; only the two binaries go in the ISO.
+      # The python variant ships the restored Python programs instead and compiles nothing.
       - name: Build hypr-helper and hypr-ui (Rust)
+        if: matrix.variant == 'rust'
         run: |
           set -euo pipefail
           [ -f repo-src/hypr-helper/Cargo.toml ] || { echo "::error::repo-src/hypr-helper/Cargo.toml missing" >&2; exit 1; }
@@ -293,6 +412,12 @@ jobs:
             # wtype: lets the clipboard popup paste for you (sends Ctrl+V)
             wtype
           )
+          # The python flavour ships the popups and helpers as Python programs
+          # (python-ui/): the interpreter and the GTK3 bindings it needs — the
+          # two packages the pre-1.2.1 ISO added for exactly these programs.
+          if [ "$VARIANT" = "python" ]; then
+            ADD+=( python python-gobject )
+          fi
 
           REMOVE=(
             firefox cachyos-hello cachyos-kde-settings
@@ -450,21 +575,52 @@ jobs:
           mkdir -p "$CONF/hypr" "$CONF/waybar" "$CONF/kitty" "$CONF/fish" "$CONF/wofi" "$CONF/mako" "$CONF/gtk-3.0" "$CONF/gtk-4.0" "$CONF/matugen/templates" "$CONF/btop" "$CONF/BraveSoftware/Brave-Browser/Default"
 
           # Wallpaper: a new random one every login (wallpaper.sh). This build-time copy is only the
-          # fallback for the first frame / lock screen. Made by hypr-helper (Rust).
+          # fallback for the first frame / lock screen. rust: made by hypr-helper; python: the
+          # restored genwall.py straight from the checkout (the wrapper resolves
+          # /usr/share paths, which do not exist in the builder container outside $AIROOT).
           mkdir -p "$AIROOT/usr/share/cachyos-hyprland"
-          # hypr-helper and hypr-ui (Rust, built in the "Build hypr-helper and hypr-ui" step) replace every
-          # Python script the ISO used to have. No Python is needed at runtime.
-          install -Dm755 repo-src/hypr-helper/target/release/hypr-helper "$AIROOT/usr/bin/hypr-helper"
-          install -Dm755 repo-src/hypr-ui/target/release/hypr-ui "$AIROOT/usr/bin/hypr-ui"
+          genwall() {
+            if [ "$VARIANT" = "rust" ]; then
+              "$AIROOT/usr/bin/hypr-helper" genwall "$@"
+            else
+              python3 repo-src/python-ui/genwall.py "$@"
+            fi
+          }
+          # Install the popups and helpers per variant. Both flavours end up with
+          # the SAME two commands on the ISO, /usr/bin/hypr-ui and
+          # /usr/bin/hypr-helper, so every shipped script (wifi.sh, volume.sh,
+          # power.sh, clipboard.sh, popup-pos.sh, kb-switch.sh, wallpaper.sh,
+          # brave-wall.sh, updateos, hyprland.lua autostart) works unchanged in
+          # both — no branching inside the shipped scripts:
+          #   rust   - the two Rust binaries from the "Build hypr-helper and
+          #            hypr-ui" step; this ISO needs no Python at runtime.
+          #   python - POSIX sh wrappers plus the restored Python files under
+          #            /usr/share/cachyos-hyprland/py/. The wrappers repeat the
+          #            subcommand after the script name ("python3 .../wifi-popup.py
+          #            hypr-ui wifi"), so the running process's command line
+          #            still contains "hypr-ui wifi" / "hypr-helper ws-daemon"
+          #            and the `pkill -f` toggles in the shipped scripts and
+          #            updateos keep working. LD_PRELOAD set by the callers flows
+          #            through the wrappers' exec.
+          if [ "$VARIANT" = "rust" ]; then
+            install -Dm755 repo-src/hypr-helper/target/release/hypr-helper "$AIROOT/usr/bin/hypr-helper"
+            install -Dm755 repo-src/hypr-ui/target/release/hypr-ui "$AIROOT/usr/bin/hypr-ui"
+          else
+            install -Dm755 repo-src/python-ui/hypr-helper "$AIROOT/usr/bin/hypr-helper"
+            install -Dm755 repo-src/python-ui/hypr-ui "$AIROOT/usr/bin/hypr-ui"
+            mkdir -p "$AIROOT/usr/share/cachyos-hyprland/py"
+            install -m644 repo-src/python-ui/*.py "$AIROOT/usr/share/cachyos-hyprland/py/"
+          fi
           # archiso does not keep file modes unless profiledef.sh lists them.
+          # (Both flavours: the same two commands, so the same two entries.)
           while IFS= read -r pd; do
             sedx -o "$pd" '/^file_permissions=(/a\["/usr/bin/hypr-helper"]="0:0:755"'
             sedx -o "$pd" '/^file_permissions=(/a\["/usr/bin/hypr-ui"]="0:0:755"'
           done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
-          "$AIROOT/usr/bin/hypr-helper" genwall png "$CONF/hypr/wallpaper.png"
+          genwall png "$CONF/hypr/wallpaper.png"
           # Brave: first new-tab picture, so a fresh ISO already has one in its home folder
           mkdir -p "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images"
-          "$AIROOT/usr/bin/hypr-helper" genwall png "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images/background.png"
+          genwall png "$CONF/BraveSoftware/Brave-Browser/Default/sanitized_background_images/background.png"
 
           cat > "$CONF/hypr/hyprland.lua" <<'HYPRRICE'
           -- cachyos-hyprland rice
@@ -3176,13 +3332,48 @@ jobs:
           if ! grep -q 'hypr-helper brave-wall-watch' "$R/hypr/hyprland.lua"; then
             echo "VERIFY FAIL: hyprland.lua does not start hypr-helper brave-wall-watch" >&2; fail=1
           fi
-          if grep -rq 'genwall\.py\|ws-daemon\.py\|brave-wall-watch\.py' cachyos/archiso/airootfs/etc cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
-            echo "VERIFY FAIL: leftover reference to a removed Python helper" >&2; fail=1
-          fi
+          # Both flavours ship /usr/bin/hypr-ui and /usr/bin/hypr-helper, and
+          # both need their file_permissions entries (the existence check above
+          # already covers both files in both flavours).
           while IFS= read -r pd; do
             grep -q 'usr/bin/hypr-helper' "$pd" \
               || { echo "VERIFY FAIL: hypr-helper has no file_permissions entry in $pd" >&2; fail=1; }
+            grep -q 'usr/bin/hypr-ui' "$pd" \
+              || { echo "VERIFY FAIL: hypr-ui has no file_permissions entry in $pd" >&2; fail=1; }
           done < <(find cachyos -maxdepth 3 -name 'profiledef.sh' -not -path '*/airootfs/*' -not -path '*/.git/*')
+          if [ "$VARIANT" = "rust" ]; then
+            # The Rust rewrite removed the Python helpers: nothing may reference
+            # them and no shipped script may use Python.
+            if grep -rq 'genwall\.py\|ws-daemon\.py\|brave-wall-watch\.py' cachyos/archiso/airootfs/etc cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
+              echo "VERIFY FAIL: leftover reference to a removed Python helper" >&2; fail=1
+            fi
+            if grep -rqE 'python3?[ "]|\.py\b' "$R" cachyos/archiso/airootfs/usr/share/cachyos-hyprland cachyos/archiso/airootfs/usr/local/bin 2>/dev/null; then
+              grep -rnE 'python3?[ "]|\.py\b' "$R" cachyos/archiso/airootfs/usr/share/cachyos-hyprland cachyos/archiso/airootfs/usr/local/bin 2>/dev/null >&2
+              echo "VERIFY FAIL: a shipped script still uses Python" >&2; fail=1
+            fi
+          else
+            # python flavour: the .py files under usr/share/cachyos-hyprland/py
+            # are there ON PURPOSE (the restored programs). But the shipped
+            # scripts in skel — the same files as the rust flavour's — must call
+            # the wrapper commands, never a .py path directly.
+            if grep -rq 'genwall\.py\|ws-daemon\.py\|brave-wall-watch\.py' cachyos/archiso/airootfs/etc; then
+              echo "VERIFY FAIL: shipped config references a Python helper directly (it must call hypr-ui/hypr-helper)" >&2; fail=1
+            fi
+            if grep -rqE '\.py\b' "$R" 2>/dev/null; then
+              echo "VERIFY FAIL: a shipped script references a .py file directly (it must call hypr-ui/hypr-helper)" >&2; fail=1
+            fi
+            # Every restored Python file must compile and the two wrappers must
+            # be valid POSIX sh. py_compile runs on the repo-src copies
+            # (identical bytes) so no __pycache__ directory lands in the ISO.
+            for f in repo-src/python-ui/*.py; do
+              python3 -m py_compile "$f" \
+                || { echo "VERIFY FAIL: py_compile failed for $f" >&2; fail=1; }
+            done
+            sh -n cachyos/archiso/airootfs/usr/bin/hypr-ui \
+              || { echo "VERIFY FAIL: the hypr-ui wrapper has a shell syntax error" >&2; fail=1; }
+            sh -n cachyos/archiso/airootfs/usr/bin/hypr-helper \
+              || { echo "VERIFY FAIL: the hypr-helper wrapper has a shell syntax error" >&2; fail=1; }
+          fi
           if grep -q 'for i = 1, 9' "$R/hypr/hyprland.lua" || ! grep -q 'for i = 1, 4 do' "$R/hypr/hyprland.lua"; then
             echo "VERIFY FAIL: workspace binds must cover 1-4 only" >&2; fail=1
           fi
@@ -3201,10 +3392,8 @@ jobs:
           for j in "$R/BraveSoftware/Brave-Browser/Default/Preferences"; do
             python3 -m json.tool "$j" >/dev/null || { echo "VERIFY FAIL: $j is not valid JSON" >&2; fail=1; }
           done
-          if grep -rqE 'python3?[ "]|\.py\b' "$R" cachyos/archiso/airootfs/usr/share/cachyos-hyprland cachyos/archiso/airootfs/usr/local/bin 2>/dev/null; then
-            grep -rnE 'python3?[ "]|\.py\b' "$R" cachyos/archiso/airootfs/usr/share/cachyos-hyprland cachyos/archiso/airootfs/usr/local/bin 2>/dev/null >&2
-            echo "VERIFY FAIL: a shipped script still uses Python" >&2; fail=1
-          fi
+          # (the "no shipped script uses Python" grep for the rust flavour lives
+          # in the VARIANT branch above)
           if grep -rq 'brave-launch\|cachyos-wall' cachyos/archiso/airootfs/etc cachyos/archiso/airootfs/usr/share/cachyos-hyprland; then
             echo "VERIFY FAIL: leftover Brave wallpaper/launcher reference" >&2; fail=1
           fi
@@ -3297,7 +3486,10 @@ jobs:
           du -sh /var/cache/pacman/pkg || true
 
       - name: Save pacman package cache
-        if: ${{ !cancelled() && steps.pacman-cache.outputs.cache-hit != 'true' }}
+        # Saved from the rust leg only: both matrix legs restore the same shared
+        # key and two legs saving the same key conflict; saving from one variant
+        # also avoids storing the multi-GB cache twice per week.
+        if: ${{ !cancelled() && steps.pacman-cache.outputs.cache-hit != 'true' && matrix.variant == 'rust' }}
         uses: actions/cache/save@v4
         with:
           path: /var/cache/pacman/pkg
@@ -3307,7 +3499,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
+          # unique per matrix leg, so one variant's log never overwrites the other's
+          name: build-log-${{ matrix.variant }}
           path: build.log
           if-no-files-found: ignore
           retention-days: 7
@@ -3413,12 +3606,14 @@ jobs:
           done < <(find cachyos/out -name '*.iso')
 
       # Release assets do not count toward Actions storage, so only keep an
-      # artifact copy when the ISO is NOT going to a release.
+      # artifact copy when the ISO is NOT going to a release. The name carries
+      # the variant: both matrix legs upload their own ISO, and v4 artifact
+      # names must be unique within a run.
       - name: Upload ISO as Artifact
         if: steps.meta.outputs.release != 'true' || steps.size.outputs.release_ok != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: cachyos-hyprland-iso
+          name: cachyos-hyprland-iso-${{ matrix.variant }}
           path: |
             cachyos/out/**/*.iso
             cachyos/out/**/*.sha256
@@ -3426,17 +3621,83 @@ jobs:
           retention-days: 1
           compression-level: 0   # ISOs are already compressed
 
-      - name: Write release notes
-        if: steps.meta.outputs.release == 'true'
+      - name: Release ISO (upload this variant's ISO to the release)
+        # The release itself was created by the prepare job, so the two matrix
+        # legs only upload their own assets — there is no create race. No
+        # body/body_path here: the finish job writes the one release body at
+        # the end, so both flavours end up in a single set of notes.
+        if: steps.meta.outputs.release == 'true' && steps.size.outputs.release_ok == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          files: |
+            cachyos/out/**/*.iso
+            cachyos/out/**/*.sha256
         env:
-          VERSION: ${{ steps.meta.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Note when release was skipped
+        if: steps.meta.outputs.release != 'true'
+        run: |
+          echo "Release skipped (release=false). The ISO is available as the workflow artifact cachyos-hyprland-iso-${VARIANT}." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record data for the release notes
+        # Runs even when a later step failed so the finish job always learns the
+        # upstream commit this variant cloned. Both legs write the same value;
+        # see the outputs comment on this job for why nothing variant-specific
+        # is exported this way.
+        id: report
+        if: always()
+        run: |
+          set -uo pipefail
+          up=$(git -c safe.directory='*' -C cachyos rev-parse --short HEAD 2>/dev/null || echo unknown)
+          echo "upstream_sha=$up" >> "$GITHUB_OUTPUT"
+          echo "Upstream CachyOS-Live-ISO commit (${VARIANT} leg): $up"
+
+  finish:
+    # One release body for both flavours, written once the matrix is done: the
+    # CHANGELOG section for the version, a table listing BOTH ISOs (presence,
+    # sizes and SHA-256 straight from the release assets and their .sha256
+    # files) and a sentence on what each flavour is. If a variant failed, was
+    # cancelled, or its ISO hit the 2 GiB release limit, the notes say so
+    # instead of silently omitting the row.
+    # needs prepare as well so its outputs (version/tag/release) are readable
+    # here; build already depends on prepare, so the ordering is unchanged.
+    needs: [prepare, build-cachyos-hyprland]
+    if: always()   # the notes are needed precisely when something went wrong
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # edits the release body
+      actions: read     # reads this run's matrix jobs and artifacts
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE: ${{ needs.prepare.outputs.release }}
+      RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
+      UPSTREAM: ${{ needs.build-cachyos-hyprland.outputs.upstream_sha }}
+    steps:
+      - name: Fetch CHANGELOG.md
+        uses: actions/checkout@v4
+        with:
+          path: repo-src
+          sparse-checkout: CHANGELOG.md
+          fetch-depth: 1
+
+      - name: Write the release notes
+        env:
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          iso=$(find cachyos/out -name '*.iso' | sort | head -n1)
-          sum=$(cut -d' ' -f1 "$iso.sha256")
-          size=$(du -h "$iso" | cut -f1)
-          up=$(git -c safe.directory='*' -C cachyos rev-parse --short HEAD)
-          # Pull this version's section ("## 1.0.3" or "## [1.0.3] - date") out of CHANGELOG.md.
+
+          if [ "$RELEASE" != "true" ]; then
+            echo "Release skipped (release=false): no notes to write. The ISOs of this run are the per-variant workflow artifacts." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # ---- this version's CHANGELOG section ----
           changelog=$(mktemp)
           if [ -f repo-src/CHANGELOG.md ]; then
             awk -v v="$VERSION" '
@@ -3445,12 +3706,49 @@ jobs:
               | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' | sed '/./,$!d' > "$changelog"
           fi
           if [ -s "$changelog" ]; then
-            echo "Release description: CHANGELOG.md section ${VERSION}"
             echo "Release description: CHANGELOG.md section \`${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::notice::No section for ${VERSION} in CHANGELOG.md; using the default release description."
-            echo "Release description: default (no CHANGELOG.md section for ${VERSION})" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+          # ---- what actually got attached: the release assets are the source of
+          # truth. Sizes come from the asset metadata; the SHA-256 comes from the
+          # attached .sha256 asset — the same .sha256 file the build job made. ----
+          if ! rel_json=$(gh api "repos/$REPO/releases/tags/$TAG"); then
+            echo "::error::No release found for tag $TAG (did the prepare job fail to create it?). Notes were not written." >&2
+            exit 1
+          fi
+          rel_id=$(printf '%s' "$rel_json" | jq -r .id)
+          asset_size() {  # asset_size NAME -> size in bytes, or "" if not attached
+            printf '%s' "$rel_json" | jq -r --arg n "$1" \
+              '[.assets[] | select(.name == $n) | .size] | first // empty | tostring'
+          }
+          sha_of() {  # sha_of ISO_NAME -> the hash from its attached .sha256 asset
+            id=$(printf '%s' "$rel_json" | jq -r --arg n "$1.sha256" \
+              '[.assets[] | select(.name == $n) | .id] | first // empty | tostring')
+            [ -n "$id" ] || return 0
+            gh api "repos/$REPO/releases/assets/$id" -H "Accept: application/octet-stream" 2>/dev/null | cut -d' ' -f1 || true
+          }
+          human() {  # bytes -> "1.4 GiB" / "980 MiB"
+            b=$1
+            if [ "$b" -ge 1073741824 ]; then awk -v b="$b" 'BEGIN { printf "%.1f GiB", b / 1073741824 }'
+            else awk -v b="$b" 'BEGIN { printf "%.0f MiB", b / 1048576 }'; fi
+          }
+
+          # ---- per-variant facts, so a flavour is never silently omitted: the
+          # conclusion of each matrix leg of this run, and whether an ISO
+          # workflow artifact exists for it (that is how a >= 2 GiB ISO or a
+          # release=false run still reaches the user). ----
+          job_conclusion() {  # job_conclusion VARIANT -> conclusion of that leg
+            gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" \
+              | jq -r --arg v "($1)" '[.jobs[] | select(.name | contains($v)) | .conclusion] | first // empty'
+          }
+          artifact_exists() {  # artifact_exists NAME -> "true" / "false"
+            gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+              | jq -r --arg n "$1" 'if any(.artifacts[]?; .name == $n) then "true" else "false" end'
+          }
+
+          notes=$(mktemp)
           {
             if [ -s "$changelog" ]; then
               echo "### What's new"
@@ -3460,12 +3758,42 @@ jobs:
               echo "Unofficial CachyOS live ISO with a Hyprland desktop instead of KDE Plasma."
             fi
             echo ""
+            echo "### Downloads"
+            echo ""
+            echo "One workflow run, two flavours of the same ISO:"
+            echo ""
+            echo "| Flavour | File | Size | SHA-256 / status |"
+            echo "|---|---|---|---|"
+            for v in rust python; do
+              iso="cachyos-hyprland-${VERSION}-${v}-x86_64.iso"
+              bytes=$(asset_size "$iso")
+              if [ -n "$bytes" ]; then
+                sha=$(sha_of "$iso")
+                if [ -n "$sha" ]; then
+                  printf '| **%s** | `%s` | %s | `%s` |\n' "$v" "$iso" "$(human "$bytes")" "$sha"
+                else
+                  printf '| **%s** | `%s` | %s | see `%s.sha256` |\n' "$v" "$iso" "$(human "$bytes")" "$iso"
+                fi
+                continue
+              fi
+              # Not attached: say why instead of omitting the flavour.
+              concl=$(job_conclusion "$v")
+              art=$(artifact_exists "cachyos-hyprland-iso-${v}")
+              if [ "$concl" != "success" ] && [ -n "$concl" ]; then
+                printf '| **%s** | `%s` | — | not built: the %s variant ended "%s" (see its job and its build-log artifact in this run) |\n' "$v" "$iso" "$v" "$concl"
+              elif [ "$art" = "true" ]; then
+                printf '| **%s** | `%s` | — | built, but not attached: 2 GiB or larger, so GitHub would reject it (get it from the "cachyos-hyprland-iso-%s" artifact of this run) |\n' "$v" "$iso" "$v"
+              else
+                printf '| **%s** | `%s` | — | expected on this release but not found (the %s variant ended "%s") |\n' "$v" "$iso" "$v" "${concl:-unknown}"
+              fi
+            done
+            echo ""
+            echo "The **rust** flavour is the default: the Wi-Fi, volume, power and clipboard popups and the wallpaper/workspace/Brave helpers are two compiled binaries, \`hypr-ui\` and \`hypr-helper\`."
+            echo "The **python** flavour is the same ISO except those popups and helpers run as the original Python programs, started through wrappers that keep the same commands; it adds \`python\` and \`python-gobject\` to the package list, so it is larger and its popups are slower to open."
+            echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| File | \`$(basename "$iso")\` |"
-            echo "| Size | $size |"
-            echo "| SHA-256 | \`$sum\` |"
-            echo "| Upstream | CachyOS-Live-ISO \`$up\` |"
+            echo "| Upstream | CachyOS-Live-ISO \`${UPSTREAM:-unknown}\` |"
             echo ""
             echo "### Before you boot"
             echo ""
@@ -3474,25 +3802,21 @@ jobs:
             echo "- Verify the download with \`sha256sum -c <file>.sha256\`."
             echo "- This is not an official CachyOS release."
             echo ""
-          } > release-notes.md
+          } > "$notes"
 
-      - name: Release ISO
-        if: steps.meta.outputs.release == 'true' && steps.size.outputs.release_ok == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.release_name }}
-          target_commitish: ${{ github.sha }}
-          prerelease: ${{ inputs.prerelease == true }}
-          body_path: release-notes.md
-          files: |
-            cachyos/out/**/*.iso
-            cachyos/out/**/*.sha256
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ---- replace the placeholder body, keeping GitHub's auto-generated
+          # "What's Changed" section that generate_release_notes appended after
+          # the placeholder the prepare job wrote. ----
+          old_body=$(gh api "repos/$REPO/releases/$rel_id" --jq .body)
+          auto=$(printf '%s' "$old_body" | sed '/<!-- cachyos-notes-placeholder -->/d' | sed -e '/./,$!d')
+          final=$(mktemp)
+          {
+            cat "$notes"
+            if [ -n "$(printf '%s' "$auto" | tr -d '[:space:]')" ]; then
+              echo ""
+              printf '%s\n' "$auto"
+            fi
+          } > "$final"
+          gh release edit "$TAG" --repo "$REPO" --notes-file "$final"
+          echo "Release notes written to $RELEASE_NAME ($TAG)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Note when release was skipped
-        if: steps.meta.outputs.release != 'true'
-        run: |
-          echo "Release skipped (release=false). The ISO is available as the workflow artifact." >> "$GITHUB_STEP_SUMMARY"
