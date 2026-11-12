@@ -2902,7 +2902,7 @@ jobs:
 
           CUR_VER=$(sed -n 's/^VERSION="\(.*\)"/\1/p' /etc/cachyos-hyprland-release 2>/dev/null)
           CUR_VER=${CUR_VER:-unknown}
-          # rust or python (stamped since 1.2.1; "unknown" on older images)
+          # the ISO flavour: rust or py (stamped since 1.2.1; "unknown" on older images)
           CUR_FL=$(sed -n 's/^FLAVOUR="\(.*\)"/\1/p' /etc/cachyos-hyprland-release 2>/dev/null)
           CUR_FL=${CUR_FL:-unknown}
           lbl() {   # lbl VERSION FLAVOUR -> "1.2.1 (python)", or just the version when the flavour is unknown
@@ -3862,4 +3862,3 @@ jobs:
           } > "$final"
           gh release edit "$TAG" --repo "$REPO" --notes-file "$final"
           echo "Release notes written to $RELEASE_NAME ($TAG)" >> "$GITHUB_STEP_SUMMARY"
-
