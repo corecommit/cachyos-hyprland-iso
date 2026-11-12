@@ -1,7 +1,7 @@
 //! Shared pieces: the full-screen layer-shell window with the centred "card", colours, CSS,
 //! running commands, and background work that reports back on the GTK thread.
 
-use gtk::glib::signal::Inhibit;
+use gtk::glib::Propagation;
 use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
@@ -87,7 +87,7 @@ pub struct Shell {
 pub fn shell(css: &str, card_w: i32, card_h: i32) -> Shell {
     let win = gtk::Window::new(gtk::WindowType::Toplevel);
     win.set_app_paintable(true);
-    if let Some(vis) = win.screen().and_then(|s| s.rgba_visual()) {
+    if let Some(vis) = gtk::prelude::WidgetExt::screen(&win).and_then(|s| s.rgba_visual()) {
         win.set_visual(Some(&vis));
     }
     let stash = ToGlibPtr::<*mut gtk::ffi::GtkWindow>::to_glib_none(&win);
@@ -130,7 +130,7 @@ pub fn shell(css: &str, card_w: i32, card_h: i32) -> Shell {
         if !inside {
             gtk::main_quit();
         }
-        Inhibit(true)
+        Propagation::Stop
     });
     win.connect_destroy(|_| gtk::main_quit());
     Shell { win, card }

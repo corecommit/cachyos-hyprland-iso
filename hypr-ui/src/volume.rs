@@ -2,7 +2,7 @@
 
 use crate::{conf::Conf, ui};
 use gtk::gdk;
-use gtk::glib::signal::Inhibit;
+use gtk::glib::Propagation;
 use gtk::prelude::*;
 use gtk::{glib, pango};
 use serde_json::Value;
@@ -231,14 +231,14 @@ impl VolRow {
             let r = row.clone();
             row.scale.connect_button_press_event(move |_, _| {
                 r.popup.dragging.set(true);
-                Inhibit(false)
+                Propagation::Proceed
             });
         }
         {
             let r = row.clone();
             row.scale.connect_button_release_event(move |_, _| {
                 r.popup.dragging.set(false);
-                Inhibit(false)
+                Propagation::Proceed
             });
         }
         {
@@ -479,9 +479,9 @@ pub fn run(conf: &Conf) {
     sh.win.connect_key_press_event(|_, ev| {
         if ev.keyval() == gdk::keys::constants::Escape {
             gtk::main_quit();
-            return Inhibit(true);
+            return Propagation::Stop;
         }
-        Inhibit(false)
+        Propagation::Proceed
     });
     sh.win.show_all();
 

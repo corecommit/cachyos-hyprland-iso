@@ -3,7 +3,7 @@
 use crate::{conf::Conf, ui};
 use gtk::gdk;
 use gtk::gdk_pixbuf::{Colorspace, InterpType, Pixbuf};
-use gtk::glib::signal::Inhibit;
+use gtk::glib::Propagation;
 use gtk::prelude::*;
 use gtk::{glib, pango};
 use serde_json::Value;
@@ -455,19 +455,19 @@ pub fn run(conf: &Conf) {
             let k = ev.keyval();
             if k == gdk::keys::constants::Escape {
                 gtk::main_quit();
-                return Inhibit(true);
+                return Propagation::Stop;
             }
             if k == gdk::keys::constants::Down {
                 me.move_sel(1);
-                return Inhibit(true);
+                return Propagation::Stop;
             }
             if k == gdk::keys::constants::Up {
                 me.move_sel(-1);
-                return Inhibit(true);
+                return Propagation::Stop;
             }
             if k == gdk::keys::constants::Return || k == gdk::keys::constants::KP_Enter {
                 me.pick(me.list.selected_row());
-                return Inhibit(true);
+                return Propagation::Stop;
             }
             if k == gdk::keys::constants::Delete && me.search.text().is_empty() {
                 if let Some(row) = me.list.selected_row() {
@@ -476,9 +476,9 @@ pub fn run(conf: &Conf) {
                         me.delete(&it);
                     }
                 }
-                return Inhibit(true);
+                return Propagation::Stop;
             }
-            Inhibit(false)
+            Propagation::Proceed
         });
     }
     sh.win.show_all();

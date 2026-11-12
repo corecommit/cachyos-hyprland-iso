@@ -2,7 +2,7 @@
 
 use crate::{conf::Conf, ui};
 use gtk::gdk;
-use gtk::glib::signal::Inhibit;
+use gtk::glib::Propagation;
 use gtk::prelude::*;
 use gtk::{glib, pango};
 use std::cell::{Cell, RefCell};
@@ -404,9 +404,9 @@ pub fn run(conf: &Conf) {
     sh.win.connect_key_press_event(|_, ev| {
         if ev.keyval() == gdk::keys::constants::Escape {
             gtk::main_quit();
-            return Inhibit(true);
+            return Propagation::Stop;
         }
-        Inhibit(false)
+        Propagation::Proceed
     });
     sh.win.show_all();
 

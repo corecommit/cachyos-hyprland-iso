@@ -2,7 +2,7 @@
 
 use crate::{conf::Conf, ui};
 use gtk::gdk;
-use gtk::glib::signal::Inhibit;
+use gtk::glib::Propagation;
 use gtk::prelude::*;
 
 const CSS: &str = r#"
@@ -90,16 +90,16 @@ pub fn run(conf: &Conf) {
         let k = ev.keyval();
         if k == gdk::keys::constants::Escape {
             gtk::main_quit();
-            return Inhibit(true);
+            return Propagation::Stop;
         }
         if let Some(c) = k.to_unicode() {
             let c = c.to_ascii_lowercase();
             if let Some(a) = ACTIONS.iter().find(|a| a.key.to_ascii_lowercase() == c) {
                 run_action(a);
-                return Inhibit(true);
+                return Propagation::Stop;
             }
         }
-        Inhibit(false)
+        Propagation::Proceed
     });
 
     sh.win.show_all();
