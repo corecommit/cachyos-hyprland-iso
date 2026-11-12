@@ -85,6 +85,8 @@ TERMINALS = ("kitty", "foot", "alacritty", "wezterm", "ghostty", "konsole", "xte
 
 
 def active_class():
+    """Class of the window that has focus right now. Call BEFORE the popup opens:
+    once the popup holds keyboard focus, Hyprland may report no active window."""
     try:
         w = json.loads(subprocess.check_output(["hyprctl", "-j", "activewindow"], text=True, timeout=2))
         return (w.get("class") or "").lower()
@@ -92,19 +94,19 @@ def active_class():
         return ""
 
 
-def auto_paste():
-    """Press Ctrl+V (Ctrl+Shift+V in terminals) in the window you came from."""
-    cls = active_class()
-    if not cls:
-        return
-    if any(t in cls for t in TERMINALS):
+def auto_paste(cls):
+    """Press Ctrl+V (Ctrl+Shift+V in terminals) in the window you came from.
+    cls is the class captured before the popup opened; if it is empty we still
+    paste, with plain Ctrl+V."""
+    if cls and any(t in cls for t in TERMINALS):
         keys = ["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]
     else:
         keys = ["-M", "ctrl", "-k", "v", "-m", "ctrl"]
     # short delay: the popup must close and give focus back first
-    subprocess.Popen(["sh", "-c", 'sleep 0.2; exec wtype "$@"', "wtype", *keys],
-           start_new_session=True,
-           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(["sh", "-c", 'sleep 0.25; exec wtype "$@"', "wtype", *keys],
+                     start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 
 class Item(Gtk.ListBoxRow):
     def __init__(self, popup, line):
@@ -163,7 +165,7 @@ class Item(Gtk.ListBoxRow):
             r = min(THUMB_W / w, THUMB_H / h, 1.0)
             if r < 1.0:
                 pb = pb.scale_simple(max(1, int(w * r)), max(1, int(h * r)),
-                                    GdkPixbuf.InterpType.BILINEAR)
+                                     GdkPixbuf.InterpType.BILINEAR)
             GLib.idle_add(self.set_thumb, pb)
         except Exception:
             pass
@@ -175,9 +177,11 @@ class Item(Gtk.ListBoxRow):
 
 
 class Popup(Gtk.Window):
-    def __init__(self):
+    def __init__(self, target=""):
         super().__init__()
         self.wipe_armed = False
+        # class of the window to paste into, captured before the popup opened
+        self.target = target
 
         self.set_app_paintable(True)
         vis = self.get_screen().get_rgba_visual()
@@ -189,7 +193,7 @@ class Popup(Gtk.Window):
         GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
         GtkLayerShell.set_exclusive_zone(self, -1)
         for edge in (GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM,
-                    GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT):
+                     GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT):
             GtkLayerShell.set_anchor(self, edge, True)
 
         prov = Gtk.CssProvider()
@@ -286,7 +290,7 @@ class Popup(Gtk.Window):
         def work():
             try:
                 out = subprocess.run(["cliphist", "list"], capture_output=True,
-                                    text=True, errors="replace", timeout=10).stdout
+                                     text=True, errors="replace", timeout=10).stdout
             except Exception:
                 out = ""
             GLib.idle_add(self.populate, [l for l in out.splitlines() if l.strip()])
@@ -310,7 +314,7 @@ class Popup(Gtk.Window):
             self.note.hide()
         else:
             self.note.set_text("Nothing copied yet" if not self.search.get_text()
-                              else "No matches")
+                               else "No matches")
             self.note.show()
 
     def on_search(self, entry):
@@ -346,25 +350,25 @@ class Popup(Gtk.Window):
 
     # ---------- actions ----------
     def pick(self, row):
-      if row is None:
-          return
-      try:
-          data = subprocess.run(["cliphist", "decode", row.cid],
-                                capture_output=True, timeout=10).stdout
-          args = ["wl-copy"] + (["--type", row.mime] if row.mime else [])
-          p = subprocess.Popen(args, stdin=subprocess.PIPE, start_new_session=True,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-          p.stdin.write(data)
-          p.stdin.close()
-          auto_paste()
-      except Exception:
-          pass
-      Gtk.main_quit()
+        if row is None:
+            return
+        try:
+            data = subprocess.run(["cliphist", "decode", row.cid],
+                                  capture_output=True, timeout=10).stdout
+            args = ["wl-copy"] + (["--type", row.mime] if row.mime else [])
+            p = subprocess.Popen(args, stdin=subprocess.PIPE, start_new_session=True,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            p.stdin.write(data)
+            p.stdin.close()
+            auto_paste(self.target)
+        except Exception:
+            pass
+        Gtk.main_quit()
 
     def delete(self, row):
         try:
             subprocess.run(["cliphist", "delete"], input=row.line.encode(),
-                          capture_output=True, timeout=5)
+                           capture_output=True, timeout=5)
         except Exception:
             return
         rows = self.visible_rows()
@@ -421,5 +425,8 @@ class Popup(Gtk.Window):
 
 
 if __name__ == "__main__":
-    Popup()
+    # Must happen before the popup is created: afterwards the popup has keyboard
+    # focus and Hyprland may no longer report the window we came from.
+    target = active_class()
+    Popup(target)
     Gtk.main()

@@ -69,21 +69,25 @@ fn pointer_anchor() -> Option<(f64, f64, f64, f64)> {
     None
 }
 
-/// Press Ctrl+V (Ctrl+Shift+V in terminals) in the window you came from.
-fn auto_paste() {
-    let cls = hyprctl_json("activewindow")
+/// Class of the window that has focus right now. Call BEFORE the popup opens:
+/// once the popup holds keyboard focus, Hyprland may report no active window.
+fn active_class() -> String {
+    hyprctl_json("activewindow")
         .and_then(|w| w["class"].as_str().map(|s| s.to_lowercase()))
-        .unwrap_or_default();
-    if cls.is_empty() {
-        return;
-    }
-    let keys: &[&str] = if TERMINALS.iter().any(|t| cls.contains(t)) {
+        .unwrap_or_default()
+}
+
+/// Press Ctrl+V (Ctrl+Shift+V in terminals) in the window you came from.
+/// `cls` is the class captured before the popup opened; if it is empty we
+/// still paste, with plain Ctrl+V.
+fn auto_paste(cls: &str) {
+    let keys: &[&str] = if !cls.is_empty() && TERMINALS.iter().any(|t| cls.contains(t)) {
         &["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]
     } else {
         &["-M", "ctrl", "-k", "v", "-m", "ctrl"]
     };
     // short delay: the popup must close and give focus back first
-    let mut args: Vec<&str> = vec!["-c", "sleep 0.2; exec wtype \"$@\"", "wtype"];
+    let mut args: Vec<&str> = vec!["-c", "sleep 0.25; exec wtype \"$@\"", "wtype"];
     args.extend_from_slice(keys);
     ui::spawn_detached("sh", &args);
 }
@@ -165,6 +169,8 @@ struct Clip {
     wipe_armed: Cell<bool>,
     pool: ui::Pool,
     max_items: usize,
+    /// Class of the window to paste into, captured before the popup opened.
+    target: String,
 }
 
 impl Clip {
@@ -322,7 +328,7 @@ impl Clip {
                     args.push(m);
                 }
                 ui::spawn_detached_stdin("wl-copy", &args, &data);
-                auto_paste();
+                auto_paste(&self.target);
             }
         }
         gtk::main_quit();
@@ -364,6 +370,10 @@ impl Clip {
 }
 
 pub fn run(conf: &Conf) {
+    // Must happen before the popup is created: afterwards the popup has keyboard
+    // focus and Hyprland may no longer report the window we came from.
+    let target = active_class();
+
     let width = conf.int("clipboard_width", 400);
     let height = conf.int("clipboard_height", 500); // fixed, so the popup can be placed predictably
     let gap = conf.int("clipboard_gap", 14) as f64;
@@ -436,6 +446,7 @@ pub fn run(conf: &Conf) {
         wipe_armed: Cell::new(false),
         pool: ui::Pool::new(3),
         max_items: conf.int("clipboard_items", 60).max(1) as usize,
+        target,
     });
     {
         let me = me.clone();
