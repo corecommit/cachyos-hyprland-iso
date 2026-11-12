@@ -1,0 +1,65 @@
+#!/bin/sh
+# hypr-helper, python flavour of the ISO (installed as /usr/bin/hypr-helper).
+# Maps the subcommands to the restored Python files in
+# /usr/share/cachyos-hyprland/py/ (the programs the ISO shipped before the Rust
+# rewrite; the shipped scripts that call hypr-helper are the same as the rust
+# flavour's).
+#
+# The subcommand words are repeated after the script name where the program
+# allows extra arguments, so the running process's command line still contains
+# "hypr-helper ws-daemon" and "hypr-helper brave-wall-watch": updateos toggles
+# the daemon with `pkill -f 'hypr-helper ws-daemon'`, and those two scripts
+# ignore extra arguments. genwall cannot get them: it parses argv strictly
+# (png OUT.png [--style ...] [--seed N] [--size WxH]), so its arguments are
+# passed through unchanged — nothing pkill-matches genwall. popup-pos and
+# kb-name are the old inline python3 helpers. LD_PRELOAD set by the callers
+# flows through exec untouched.
+PY=/usr/share/cachyos-hyprland/py
+case "${1:-}" in
+  genwall)
+    shift
+    exec python3 "$PY/genwall.py" "$@"
+    ;;
+  ws-daemon)
+    exec python3 "$PY/ws-daemon.py" hypr-helper ws-daemon
+    ;;
+  brave-wall-watch)
+    exec python3 "$PY/brave-wall-watch.py" hypr-helper brave-wall-watch
+    ;;
+  popup-pos)
+    shift
+    top="${2:-46}"
+    # Prints "X Y": centred under the mouse pointer, TOP px from the monitor's
+    # top, kept on screen. Falls back to "100 TOP" when hyprctl cannot be asked.
+    python3 -c 'import json, subprocess, sys
+w, top = int(sys.argv[1]), int(sys.argv[2])
+def hc(cmd):
+    return json.loads(subprocess.check_output(["hyprctl", "-j", cmd], text=True))
+c = hc("cursorpos")
+mons = hc("monitors")
+def size(m):
+    mw, mh = m["width"], m["height"]
+    if m.get("transform", 0) % 2:
+        mw, mh = mh, mw
+    return mw / m["scale"], mh / m["scale"]
+def has(m):
+    sw, sh = size(m)
+    return m["x"] <= c["x"] < m["x"] + sw and m["y"] <= c["y"] < m["y"] + sh
+mon = next((m for m in mons if has(m)), mons[0])
+sw, _ = size(mon)
+x = max(8, min(c["x"] - mon["x"] - w / 2, sw - w - 8))
+print(int(x), top)' "${1:-300}" "$top" 2>/dev/null || echo "100 $top"
+    exit $?
+    ;;
+  kb-name)
+    # Prints the active layout name of the main keyboard ("" when unknown).
+    hyprctl devices -j 2>/dev/null | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+print(next((k.get("active_keymap", "") for k in d["keyboards"] if k.get("main")), ""))' 2>/dev/null
+    exit $?
+    ;;
+  *)
+    echo "usage: hypr-helper genwall|ws-daemon|brave-wall-watch|popup-pos|kb-name" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,31 @@
+#!/bin/sh
+# hypr-ui, python flavour of the ISO (installed as /usr/bin/hypr-ui).
+# Maps the four popup subcommands to the restored GTK3 popups in
+# /usr/share/cachyos-hyprland/py/ (the programs the ISO shipped before the Rust
+# rewrite; the shipped wifi.sh / volume.sh / power.sh / clipboard.sh are the same
+# as the rust flavour's and call these commands).
+#
+# The subcommand words are repeated after the script name, so the running
+# process's command line still contains "hypr-ui wifi" (and volume / power /
+# clipboard): the shipped scripts toggle the popups with `pkill -f 'hypr-ui
+# wifi'` and friends. The popups ignore the extra arguments. LD_PRELOAD set by
+# the callers flows through this exec untouched.
+PY=/usr/share/cachyos-hyprland/py
+case "${1:-}" in
+  wifi)
+    exec python3 "$PY/wifi-popup.py" hypr-ui wifi
+    ;;
+  volume)
+    exec python3 "$PY/volume-popup.py" hypr-ui volume
+    ;;
+  power)
+    exec python3 "$PY/power-popup.py" hypr-ui power
+    ;;
+  clipboard)
+    exec python3 "$PY/clipboard-popup.py" hypr-ui clipboard
+    ;;
+  *)
+    echo "usage: hypr-ui wifi|volume|power|clipboard" >&2
+    exit 2
+    ;;
+esac

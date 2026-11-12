@@ -5,15 +5,17 @@
 ### Changed
 - The Wi-Fi, volume, power and clipboard popups are rewritten in Rust (`hypr-ui`). They look and work the same as in 1.2.0: same layout, colours, keys and buttons.
 - The wallpaper generator, the workspace-button daemon, the Brave new-tab wallpaper watcher and the two small helpers behind popup placement and the keyboard layout name are now one small Rust program, `hypr-helper`. The wallpaper generator makes exactly the same pictures as before: the same three looks and colour harmonies, so a given seed gives the same wallpaper.
-- Nothing on the ISO needs Python any more. `python-gobject` is no longer added to the package list, and `python` itself stays only if another package pulls it in.
+- Nothing on the **rust** ISO needs Python any more. `python-gobject` is no longer added to the package list, and `python` itself stays only if another package pulls it in.
 
 ### Added
-- `~/.config/hypr/popups.conf`: the size and position of the popups (distance from the top and right edge, widths, heights, the volume limit, the number of clipboard entries). Change a number, save, and open the popup again; there is nothing to restart.
+- **Two ISO flavours from one workflow run**: `cachyos-hyprland-<version>-rust-x86_64.iso` (the default, exactly this ISO) and `cachyos-hyprland-<version>-python-x86_64.iso`, the same ISO except the popups and helpers are the old Python programs, shipped in `/usr/share/cachyos-hyprland/py/` and reached through `/usr/bin/hypr-ui` and `/usr/bin/hypr-helper` shell wrappers. Both flavours are attached to the same release, with one set of notes. Everything outside the popups and helpers — bar, keybinds, themes, `save-progress`, `updateos` — comes from the same workflow, so a change made once reaches both.
+- `~/.config/hypr/popups.conf`: the size and position of the popups (distance from the top and right edge, widths, heights, the volume limit, the number of clipboard entries). Change a number, save, and open the popup again; there is nothing to restart. The Python flavour honours the same keys as the Rust one.
 - `~/.config/hypr/popup-user.css`: your own styling for the popups, applied on top of the built-in look every time a popup opens.
 
 ### Notes
-- The popups are programs now, so the `*-popup.py` files in `~/.config/hypr/` no longer exist (and are not used if an old copy is still there). To move the Wi-Fi or volume popup, change `right_margin` in `popups.conf` instead of editing a `.py` file as described for 1.2.0.
-- Changing what a popup does (not how it looks or where it sits) now needs a new build of the ISO.
+- There are now two flavours (see above). The Python one adds `python` and `python-gobject` to the ISO, so it is larger, and its popups are slower to open than the Rust ones because the interpreter starts first. No measured sizes or times yet: run the workflow and read the release table.
+- The popups are programs now, so the `*-popup.py` files in `~/.config/hypr/` no longer exist on the rust ISO (and are not used if an old copy is still there; the python flavour keeps its copies under `/usr/share/cachyos-hyprland/py/`). To move the Wi-Fi or volume popup, change `right_margin` in `popups.conf` instead of editing a `.py` file as described for 1.2.0.
+- Changing what a popup does (not how it looks or where it sits) now needs a new build of the ISO (rust flavour) or an edit to the Python files (python flavour).
 
 ## [1.2.0] - 2026-11-10
 
