@@ -6,25 +6,71 @@ use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use std::env;
+use std::ffi::{c_void, CString};
 use std::fs;
 use std::io::{Read, Write};
+use std::os::raw::c_char;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-// ---------- gtk-layer-shell (linked directly; the launch scripts still LD_PRELOAD it) ----------
-#[link(name = "gtk-layer-shell")]
+// ---------- gtk-layer-shell ----------
+// Loaded at run time (dlopen) instead of linked, so building needs no layer-shell dev files and
+// no linker tricks. The launch scripts still LD_PRELOAD the library, so it is already loaded
+// before wayland-client, which gtk-layer-shell requires; dlopen then simply finds it.
 extern "C" {
-    fn gtk_layer_shell_init_for_window(window: *mut gtk::ffi::GtkWindow);
-    fn gtk_layer_shell_set_layer(window: *mut gtk::ffi::GtkWindow, layer: i32);
-    fn gtk_layer_shell_set_keyboard_mode(window: *mut gtk::ffi::GtkWindow, mode: i32);
-    fn gtk_layer_shell_set_exclusive_zone(window: *mut gtk::ffi::GtkWindow, zone: i32);
-    fn gtk_layer_shell_set_anchor(window: *mut gtk::ffi::GtkWindow, edge: i32, anchor: i32);
-}
-extern "C" {
+    fn dlopen(filename: *const c_char, flag: i32) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     fn setsid() -> i32;
+}
+
+type WinFn = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow);
+type WinFnI = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow, i32);
+type WinFnII = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow, i32, i32);
+
+struct LayerShell {
+    init: WinFn,
+    set_layer: WinFnI,
+    keyboard: WinFnI,
+    zone: WinFnI,
+    anchor: WinFnII,
+}
+
+fn layer_shell() -> Option<LayerShell> {
+    unsafe {
+        let mut h: *mut c_void = std::ptr::null_mut();
+        for name in ["libgtk-layer-shell.so.0", "libgtk-layer-shell.so"] {
+            let c = CString::new(name).ok()?;
+            h = dlopen(c.as_ptr(), 2); // RTLD_NOW
+            if !h.is_null() {
+                break;
+            }
+        }
+        if h.is_null() {
+            return None;
+        }
+        let sym = |n: &str| -> *mut c_void {
+            let c = CString::new(n).unwrap();
+            dlsym(h, c.as_ptr())
+        };
+        let init = sym("gtk_layer_shell_init_for_window");
+        let layer = sym("gtk_layer_shell_set_layer");
+        let kb = sym("gtk_layer_shell_set_keyboard_mode");
+        let zone = sym("gtk_layer_shell_set_exclusive_zone");
+        let anchor = sym("gtk_layer_shell_set_anchor");
+        if [init, layer, kb, zone, anchor].iter().any(|p| p.is_null()) {
+            return None;
+        }
+        Some(LayerShell {
+            init: std::mem::transmute::<*mut c_void, WinFn>(init),
+            set_layer: std::mem::transmute::<*mut c_void, WinFnI>(layer),
+            keyboard: std::mem::transmute::<*mut c_void, WinFnI>(kb),
+            zone: std::mem::transmute::<*mut c_void, WinFnI>(zone),
+            anchor: std::mem::transmute::<*mut c_void, WinFnII>(anchor),
+        })
+    }
 }
 
 // ---------- colours ----------
@@ -92,14 +138,17 @@ pub fn shell(css: &str, card_w: i32, card_h: i32) -> Shell {
     }
     let stash = ToGlibPtr::<*mut gtk::ffi::GtkWindow>::to_glib_none(&win);
     let p: *mut gtk::ffi::GtkWindow = stash.0;
-    unsafe {
-        gtk_layer_shell_init_for_window(p);
-        gtk_layer_shell_set_layer(p, 3); // OVERLAY
-        gtk_layer_shell_set_keyboard_mode(p, 1); // EXCLUSIVE
-        gtk_layer_shell_set_exclusive_zone(p, -1);
-        for edge in 0..4 {
-            gtk_layer_shell_set_anchor(p, edge, 1);
-        }
+    match layer_shell() {
+        Some(ls) => unsafe {
+            (ls.init)(p);
+            (ls.set_layer)(p, 3); // OVERLAY
+            (ls.keyboard)(p, 1); // EXCLUSIVE
+            (ls.zone)(p, -1);
+            for edge in 0..4 {
+                (ls.anchor)(p, edge, 1);
+            }
+        },
+        None => eprintln!("hypr-ui: libgtk-layer-shell not found; the popup will be a normal window"),
     }
 
     load_css(&paint(css), gtk::STYLE_PROVIDER_PRIORITY_USER);
