@@ -2387,10 +2387,31 @@ jobs:
 
           # 6. mkarchiso deletes the pacman sync databases from the image, so every
           #    `pacman -S` needed a manual `pacman -Sy` first. Fetch them in the
-          #    background once the network is up (retries for ~10 minutes, never
-          #    blocks boot). Without a network connection you still need `-Sy` by hand.
+          #    background once the network is up (never blocks boot). First it waits for
+          #    the clock to sync: pacman-init builds the keyring at boot, BEFORE NTP, so a
+          #    wrong RTC (e.g. local time instead of UTC) dates the local pacman master key
+          #    in the future, gpg cannot sign with it, and every package fails with
+          #    "signature is unknown trust". If the key is dated in the future it is rebuilt
+          #    now that the clock is right; otherwise it is left alone. Then the databases
+          #    are fetched (retries for ~10 minutes). Without a network you still need `-Sy`.
           cat > "$AIROOT/etc/pacman-live-sync.sh" <<'SYNCSH'
           #!/bin/sh
+          timedatectl set-ntp true 2>/dev/null
+          i=0
+          while [ "$i" -lt 24 ]; do
+            [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ] && break
+            i=$((i + 1))
+            sleep 5
+          done
+          now=$(date +%s)
+          created=$(gpg --homedir /etc/pacman.d/gnupg --list-secret-keys --with-colons 2>/dev/null \
+            | awk -F: '$1 == "sec" { print $6; exit }')
+          if [ -n "$created" ] && [ "$created" -gt "$now" ]; then
+            gpgconf --homedir /etc/pacman.d/gnupg --kill all 2>/dev/null
+            rm -rf /etc/pacman.d/gnupg
+            pacman-key --init
+            pacman-key --populate archlinux cachyos
+          fi
           i=0
           while [ "$i" -lt 60 ]; do
             pacman -Sy --noconfirm && exit 0
@@ -2401,9 +2422,9 @@ jobs:
           SYNCSH
           cat > "$SYSD/pacman-live-sync.service" <<'SYNCUNIT'
           [Unit]
-          Description=Sync pacman databases once the network is up (live ISO)
-          After=NetworkManager.service pacman-init.service
-          Wants=NetworkManager.service
+          Description=Fix keyring clock skew and sync pacman databases once the network is up (live ISO)
+          After=NetworkManager.service pacman-init.service systemd-timesyncd.service
+          Wants=NetworkManager.service systemd-timesyncd.service
 
           [Service]
           Type=simple
@@ -2414,6 +2435,10 @@ jobs:
           SYNCUNIT
           ln -sf /etc/systemd/system/pacman-live-sync.service \
             "$SYSD/multi-user.target.wants/pacman-live-sync.service"
+          # Make sure the NTP client runs (the sync script waits for it).
+          mkdir -p "$SYSD/sysinit.target.wants"
+          ln -sf /usr/lib/systemd/system/systemd-timesyncd.service \
+            "$SYSD/sysinit.target.wants/systemd-timesyncd.service"
 
           # 7. Make the most of RAM in the live session (the live filesystem itself
           #    lives in RAM, so every MB saved here is a MB for your apps).
