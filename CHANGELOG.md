@@ -11,6 +11,7 @@
 ### Fixed
 - The clipboard popup now pastes into the window you came from in both flavours. The window class is captured **before** the popup opens; previously it was read after the popup had taken keyboard focus, when Hyprland could report no active window. This made the popup send plain Ctrl+V instead of Ctrl+Shift+V in terminals, and skip pasting altogether when the class came back empty. It now always pastes, with Ctrl+Shift+V in terminals and Ctrl+V elsewhere.
 - The delay before the synthetic paste is now 0.25 s instead of 0.2 s, giving the popup more time to close and hand focus back.
+- Installing packages on the live ISO no longer fails with "signature is unknown trust" when the machine's hardware clock is wrong at boot (for example a clock that holds local time instead of UTC). The pacman keyring is created before the clock is synchronised, so its master key could be dated in the future, which made every signature check fail. The background pacman sync now waits for the clock to synchronise, rebuilds the keyring only if its key is dated in the future, then syncs the package databases. `systemd-timesyncd` is also enabled explicitly.
 
 ## [1.2.1] - 2026-11-12
 
