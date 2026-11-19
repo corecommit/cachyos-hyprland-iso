@@ -262,7 +262,8 @@ pub fn run_text(prog: &str, args: &[&str], timeout: Duration) -> (i32, String) {
 /// Start a program in its own session and do not wait for it.
 pub fn spawn_detached(prog: &str, args: &[&str]) {
     let mut c = Command::new(prog);
-    c.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    // LD_PRELOAD (gtk-layer-shell) is only for the popup itself; children must not inherit it
+    c.args(args).env_remove("LD_PRELOAD").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     unsafe {
         c.pre_exec(|| {
             setsid();
@@ -275,7 +276,7 @@ pub fn spawn_detached(prog: &str, args: &[&str]) {
 /// Same, but feed `data` to its stdin first (wl-copy).
 pub fn spawn_detached_stdin(prog: &str, args: &[&str], data: &[u8]) {
     let mut c = Command::new(prog);
-    c.args(args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+    c.args(args).env_remove("LD_PRELOAD").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
     unsafe {
         c.pre_exec(|| {
             setsid();

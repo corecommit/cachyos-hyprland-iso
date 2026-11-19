@@ -84,27 +84,45 @@ scrolledwindow undershoot, scrolledwindow overshoot {{ background: none; }}
 TERMINALS = ("kitty", "foot", "alacritty", "wezterm", "ghostty", "konsole", "xterm", "gnome-terminal")
 
 
-def active_class():
-    """Class of the window that has focus right now. Call BEFORE the popup opens:
-    once the popup holds keyboard focus, Hyprland may report no active window."""
+def active_window():
+    """(class, address) of the window that has focus right now. Call BEFORE the popup
+    opens: once the popup holds keyboard focus, Hyprland may report no active window."""
     try:
         w = json.loads(subprocess.check_output(["hyprctl", "-j", "activewindow"], text=True, timeout=2))
-        return (w.get("class") or "").lower()
+        return (w.get("class") or "").lower(), (w.get("address") or "")
     except Exception:
-        return ""
+        return "", ""
 
 
-def auto_paste(cls):
+# Runs detached after the popup has gone: wait for focus to come back, then ask Hyprland to
+# send the shortcut to the window we came from ($1 mods, $2 key, $3 window). If that does not
+# answer "ok", fall back to wtype (remaining args).
+PASTE_SH = """sleep 0.25
+out=$(hyprctl dispatch sendshortcut "$1,$2,$3" 2>&1)
+[ "$out" = ok ] && exit 0
+shift 3
+exec wtype "$@"
+"""
+
+
+def child_env():
+    """LD_PRELOAD (gtk-layer-shell) is only for the popup itself; children must not inherit it."""
+    env = dict(os.environ)
+    env.pop("LD_PRELOAD", None)
+    return env
+
+
+def auto_paste(cls, addr):
     """Press Ctrl+V (Ctrl+Shift+V in terminals) in the window you came from.
-    cls is the class captured before the popup opened; if it is empty we still
-    paste, with plain Ctrl+V."""
-    if cls and any(t in cls for t in TERMINALS):
-        keys = ["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]
-    else:
-        keys = ["-M", "ctrl", "-k", "v", "-m", "ctrl"]
-    # short delay: the popup must close and give focus back first
-    subprocess.Popen(["sh", "-c", 'sleep 0.25; exec wtype "$@"', "wtype", *keys],
-                     start_new_session=True,
+    cls/addr were captured before the popup opened; with no address we target the
+    active window, and with no class we still paste, with plain Ctrl+V."""
+    term = bool(cls) and any(t in cls for t in TERMINALS)
+    mods = "CTRL SHIFT" if term else "CTRL"
+    keys = (["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"] if term
+            else ["-M", "ctrl", "-k", "v", "-m", "ctrl"])
+    win = f"address:{addr}" if addr.startswith("0x") else "activewindow"
+    subprocess.Popen(["sh", "-c", PASTE_SH, "sh", mods, "V", win, *keys],
+                     start_new_session=True, env=child_env(),
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -177,10 +195,10 @@ class Item(Gtk.ListBoxRow):
 
 
 class Popup(Gtk.Window):
-    def __init__(self, target=""):
+    def __init__(self, target=("", "")):
         super().__init__()
         self.wipe_armed = False
-        # class of the window to paste into, captured before the popup opened
+        # (class, address) of the window to paste into, captured before the popup opened
         self.target = target
 
         self.set_app_paintable(True)
@@ -356,11 +374,11 @@ class Popup(Gtk.Window):
             data = subprocess.run(["cliphist", "decode", row.cid],
                                   capture_output=True, timeout=10).stdout
             args = ["wl-copy"] + (["--type", row.mime] if row.mime else [])
-            p = subprocess.Popen(args, stdin=subprocess.PIPE, start_new_session=True,
+            p = subprocess.Popen(args, stdin=subprocess.PIPE, start_new_session=True, env=child_env(),
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             p.stdin.write(data)
             p.stdin.close()
-            auto_paste(self.target)
+            auto_paste(*self.target)
         except Exception:
             pass
         Gtk.main_quit()
@@ -427,6 +445,6 @@ class Popup(Gtk.Window):
 if __name__ == "__main__":
     # Must happen before the popup is created: afterwards the popup has keyboard
     # focus and Hyprland may no longer report the window we came from.
-    target = active_class()
+    target = active_window()
     Popup(target)
     Gtk.main()

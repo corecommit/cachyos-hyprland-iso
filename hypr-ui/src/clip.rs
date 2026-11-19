@@ -69,25 +69,40 @@ fn pointer_anchor() -> Option<(f64, f64, f64, f64)> {
     None
 }
 
-/// Class of the window that has focus right now. Call BEFORE the popup opens:
+/// (class, address) of the window that has focus right now. Call BEFORE the popup opens:
 /// once the popup holds keyboard focus, Hyprland may report no active window.
-fn active_class() -> String {
-    hyprctl_json("activewindow")
-        .and_then(|w| w["class"].as_str().map(|s| s.to_lowercase()))
-        .unwrap_or_default()
+fn active_window() -> (String, String) {
+    match hyprctl_json("activewindow") {
+        Some(w) => (
+            w["class"].as_str().map(|s| s.to_lowercase()).unwrap_or_default(),
+            w["address"].as_str().unwrap_or_default().to_string(),
+        ),
+        None => (String::new(), String::new()),
+    }
 }
 
+/// Runs detached after the popup has gone: wait for focus to come back, then ask Hyprland to
+/// send the shortcut to the window we came from ($1 mods, $2 key, $3 window). If that does not
+/// answer "ok", fall back to wtype (remaining args).
+const PASTE_SH: &str = r#"sleep 0.25
+out=$(hyprctl dispatch sendshortcut "$1,$2,$3" 2>&1)
+[ "$out" = ok ] && exit 0
+shift 3
+exec wtype "$@""#;
+
 /// Press Ctrl+V (Ctrl+Shift+V in terminals) in the window you came from.
-/// `cls` is the class captured before the popup opened; if it is empty we
-/// still paste, with plain Ctrl+V.
-fn auto_paste(cls: &str) {
-    let keys: &[&str] = if !cls.is_empty() && TERMINALS.iter().any(|t| cls.contains(t)) {
+/// `cls`/`addr` were captured before the popup opened; with no address we target the active
+/// window, and with no class we still paste, with plain Ctrl+V.
+fn auto_paste(cls: &str, addr: &str) {
+    let term = !cls.is_empty() && TERMINALS.iter().any(|t| cls.contains(t));
+    let mods = if term { "CTRL SHIFT" } else { "CTRL" };
+    let keys: &[&str] = if term {
         &["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]
     } else {
         &["-M", "ctrl", "-k", "v", "-m", "ctrl"]
     };
-    // short delay: the popup must close and give focus back first
-    let mut args: Vec<&str> = vec!["-c", "sleep 0.25; exec wtype \"$@\"", "wtype"];
+    let win = if addr.starts_with("0x") { format!("address:{addr}") } else { "activewindow".to_string() };
+    let mut args: Vec<&str> = vec!["-c", PASTE_SH, "sh", mods, "V", &win];
     args.extend_from_slice(keys);
     ui::spawn_detached("sh", &args);
 }
@@ -169,8 +184,8 @@ struct Clip {
     wipe_armed: Cell<bool>,
     pool: ui::Pool,
     max_items: usize,
-    /// Class of the window to paste into, captured before the popup opened.
-    target: String,
+    /// (class, address) of the window to paste into, captured before the popup opened.
+    target: (String, String),
 }
 
 impl Clip {
@@ -328,7 +343,7 @@ impl Clip {
                     args.push(m);
                 }
                 ui::spawn_detached_stdin("wl-copy", &args, &data);
-                auto_paste(&self.target);
+                auto_paste(&self.target.0, &self.target.1);
             }
         }
         gtk::main_quit();
@@ -372,7 +387,7 @@ impl Clip {
 pub fn run(conf: &Conf) {
     // Must happen before the popup is created: afterwards the popup has keyboard
     // focus and Hyprland may no longer report the window we came from.
-    let target = active_class();
+    let target = active_window();
 
     let width = conf.int("clipboard_width", 400);
     let height = conf.int("clipboard_height", 500); // fixed, so the popup can be placed predictably
