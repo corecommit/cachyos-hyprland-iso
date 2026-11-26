@@ -407,6 +407,8 @@ jobs:
             inter-font wqy-microhei
             # rsync: updateos copies a new version of the system over the running one
             rsync
+            # git + github-cli: version control and GitHub (gh) from the live session
+            git github-cli
             # GTK3 + layer-shell: the hypr-ui popups (wifi/volume/power/clipboard) link against these
             gtk3 gtk-layer-shell
             # wtype: lets the clipboard popup paste for you (sends Ctrl+V)
