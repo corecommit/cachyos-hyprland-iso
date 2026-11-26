@@ -78,7 +78,7 @@ The release notes list both ISOs with their sizes and SHA-256 checksums. If one 
 - **4 GB of RAM is the practical minimum.** The live session keeps all changes (installed packages, downloads, settings) in RAM. A browser plus a few apps can fill it quickly.
 - **8 GB or more is recommended**, especially if you plan to use Brave, install packages in the live session, or run the installer while doing other things.
 - If the system starts freezing or killing programs, you are almost certainly out of memory. Close Brave first.
-- Everything done in the live session is lost on reboot unless you run `save-progress` (see [Saving your progress](#saving-your-progress)). Installed packages and files over 10 MB are never saved.
+- Everything done in the live session is lost on reboot unless you run `save-progress` (see [Saving your progress](#saving-your-progress)). Installed packages, caches, package folders (`node_modules`, `.npm`, `.pnpm`, ...) and files over 20 MB are never saved.
 
 **Storage and boot speed**
 
@@ -199,7 +199,8 @@ save-progress
 
 **What is saved**
 
-- Your home folder, except caches and any file bigger than 10 MB. Every skipped file is listed at the end with its full path and size.
+- Your home folder, except any file bigger than 20 MB. Every skipped big file is listed at the end with its full path and size.
+- Not saved at all, because they can be downloaded again: caches (`.cache`, `.caches`), package-manager folders (`.npm`, `.pnpm`, `.pnpm-store`, `.yarn`, `.bun`, `node_modules`, `.cargo/registry`, `.gradle`, `.m2`) and `__pycache__`.
 - Your saved Wi-Fi networks.
 - Your timezone.
 
@@ -218,10 +219,10 @@ Things to know:
 `updateos` updates the running system from a USB stick without a reboot.
 
 ```bash
-updateos
+updateos --usb
 ```
 
-1. Plug in a USB stick flashed with the new ISO, or a normal stick that has the new `.iso` file on it. With no argument, `updateos` waits for it and lists the versions it finds. You can also pass an ISO file, a device or a folder.
+1. Plug in a USB stick flashed with the new ISO, or a normal stick that has the new `.iso` file on it. `updateos --usb` waits for it and lists the versions it finds (plain `updateos` with no argument does the same). Instead of `--usb` you can pass an ISO file, a device or a folder. `--usb` cannot be combined with one of those. `updateos --help` shows all options and examples.
 2. It shows the running and the new version, checks that there is enough room, and asks before it changes anything (`-y` skips the questions).
 3. It copies the new system files over the running ones. Your files, saved Wi-Fi networks, timezone, wallpaper and colours stay. The bar, keybinds, launcher, notification and terminal config are refreshed (your old copies are backed up in `~/.local/share/update-backup/`), and the bar, workspace buttons and Brave wallpaper watcher restart by themselves.
 

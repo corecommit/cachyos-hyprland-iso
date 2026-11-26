@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.3] - 2026-11-26
+
+### Added
+- `updateos --usb`: update from a USB. It waits for a plugged-in stick that has the new version (flashed with the new ISO, or with the `.iso` file on it) and lists what it finds, the same as `updateos` with no argument. It cannot be combined with an ISO file, folder or device, and works together with `--yes`. `updateos --help` now describes it and shows examples.
+
+### Changed
+- `save-progress` now skips files over 20 MB instead of 10 MB. The limit is one setting (`MAX_MB`) at the top of the script, and the help, the skipped-files message and the release notes follow it.
+- `save-progress` no longer saves caches and downloaded dependencies at any depth in your home folder: `.cache`, `.caches`, `.npm`, `.pnpm`, `.pnpm-store`, `.yarn`, `.bun`, `node_modules`, `__pycache__`, `.gradle`, `.m2`, `.cargo/registry`, `.cargo/git`, `.local/share/pnpm` and the trash. They can be downloaded again and used up the save space. The existing browser cache and lock-file skips are unchanged.
+- The login message now shows `updateos --usb`.
+
 ## [1.2.2] - 2026-11-12
  
 ### Added

@@ -1883,7 +1883,7 @@ jobs:
           │  Everything runs in RAM (toram). Changes are     │
           │  lost on reboot.                                 │
           │  Keep your files: run  save-progress             │
-          │  New version on a USB: updateos           │
+          │  New version on a USB: updateos --usb            │
           │                                                  │
           │  Keyboard: Super+F1 · Power menu: Super+X        │
           ╰──────────────────────────────────────────────────╯
@@ -1917,7 +1917,8 @@ jobs:
 
           Keep your files and logins
             Run `save-progress` in a terminal. It saves your home folder (files up
-            to 10 MB each) to the USB you booted from. Next boot, they come back
+            to 20 MB each; caches and node_modules/.npm/.pnpm are skipped) to the
+            USB you booted from. Next boot, they come back
             automatically ("FOUND DATA!"). Works if the USB was made with:
               - balenaEtcher, or Rufus "DD Image" mode (makes a small save partition
                 in the free space after the ISO)
@@ -1926,7 +1927,7 @@ jobs:
             encrypted, so keep the USB safe.
 
           Update without rebooting
-            Run `updateos` in a terminal, then plug in a USB that has the new
+            Run `updateos --usb` in a terminal, then plug in a USB that has the new
             version: a USB flashed with the new ISO, or a normal USB with the .iso file
             on it. The new system is copied over the running one (your files, Wi-Fi,
             timezone and wallpaper stay) and the bar and keybinds are refreshed. Open
@@ -2495,12 +2496,14 @@ jobs:
           #     in the free space after the ISO
           #   * Rufus "ISO mode" / Ventoy / any normal USB stick: saves into a folder
           #     (cachyos-hyprland-save) on the stick's biggest normal partition
-          # What is saved: the live user's home folder, except files over 10 MB and caches (the
-          # skipped files are listed with their paths), plus saved Wi-Fi networks and the timezone.
+          # What is saved: the live user's home folder, except files over 20 MB, caches and package
+          # folders (node_modules, .npm, .pnpm, ...; the skipped big files are listed with their paths),
+          # plus saved Wi-Fi networks and the timezone.
           set -u
 
           LIVE_USER="@LIVE_USER@"
           LABEL="CPSAVE"
+          MAX_MB=20                               # files bigger than this (in MB) are not saved
           SAVE_SUBDIR="cachyos-hyprland-save"
           ARCHIVE="progress.tar.zst"
           VERSION_FILE="progress.version"
@@ -2517,7 +2520,7 @@ jobs:
           ISO_VERSION=$(sed -n 's/^VERSION="\(.*\)"/\1/p' /etc/cachyos-hyprland-release 2>/dev/null)
 
           usage() {
-            cat <<'USAGE'
+            cat <<USAGE
           Usage: save-progress [OPTION]
 
           Save your files onto the USB stick you booted from, so they are back next time.
@@ -2527,8 +2530,9 @@ jobs:
             --restore      bring the saved files back (runs by itself at boot)
             -h, --help     show this help
 
-          What is saved: your home folder (files over 10 MB and caches are skipped, and the
-          skipped files are listed), saved Wi-Fi networks and the timezone.
+          What is saved: your home folder, saved Wi-Fi networks and the timezone.
+          Not saved: files over ${MAX_MB} MB (they are listed), caches, and package folders such as
+          node_modules, .npm and .pnpm (they can be downloaded again).
           It works with a raw/DD USB (a small CPSAVE partition is made after the ISO) and with
           Ventoy / Rufus ISO mode / any normal stick (a cachyos-hyprland-save folder is used).
           Run it again any time: the new save replaces the old one.
@@ -2770,12 +2774,19 @@ jobs:
           say "Saving..."
           LIST=$(mktemp)
           cd "$HOME_DIR" || die "home folder $HOME_DIR not found"
-          PRUNE=( \( -path ./.cache -o -name 'Singleton*' -o -name GPUCache -o -name 'Code Cache' \
+          # Never saved: caches, package-manager stores and downloaded dependencies (they can be
+          # fetched again and would fill the stick), plus browser lock and shader/GPU caches.
+          PRUNE=( \( -name .cache -o -name .caches -o -name .npm -o -name .pnpm -o -name .pnpm-store \
+                     -o -name .yarn -o -name .bun -o -name node_modules -o -name __pycache__ \
+                     -o -name .gradle -o -name .m2 \
+                     -o -path ./.cargo/registry -o -path ./.cargo/git -o -path ./.local/share/pnpm \
+                     -o -path ./.local/share/Trash \
+                     -o -name 'Singleton*' -o -name GPUCache -o -name 'Code Cache' \
                      -o -name ShaderCache -o -name GrShaderCache \) -prune -o )
           SKIPLIST=$(mktemp)
-          find . -xdev "${PRUNE[@]}" -type f -size +10M -print0 > "$SKIPLIST"
+          find . -xdev "${PRUNE[@]}" -type f -size +"${MAX_MB}M" -print0 > "$SKIPLIST"
           skipped=$(tr -cd '\0' < "$SKIPLIST" | wc -c)
-          find . -xdev "${PRUNE[@]}" \( -type d -o -type l -o \( -type f ! -size +10M \) \) -print0 > "$LIST"
+          find . -xdev "${PRUNE[@]}" \( -type d -o -type l -o \( -type f ! -size +"${MAX_MB}M" \) \) -print0 > "$LIST"
 
           # Write the new archive next to the old one first. The old data is only deleted once the new
           # one is complete, so a failed save never loses what was already there.
@@ -2821,7 +2832,7 @@ jobs:
           sync
           size=$(du -h "$DEST/$ARCHIVE" | cut -f1)
           if [ "$skipped" -gt 0 ]; then
-            say "Skipped $skipped file(s) bigger than 10 MB:"
+            say "Skipped $skipped file(s) bigger than ${MAX_MB} MB:"
             while IFS= read -r -d '' f; do
               printf '  %s  (%s)\n' "$HOME_DIR/${f#./}" "$(du -h --apparent-size -- "$f" | cut -f1)"
             done < "$SKIPLIST"
@@ -2870,7 +2881,7 @@ jobs:
           mkdir -p "$AIROOT/usr/local/bin"
           cat > "$AIROOT/usr/local/bin/updateos" <<'UPDATEUSB'
           #!/bin/bash
-          # updateos [--yes] [--help] [ISO-FILE | DEVICE | FOLDER]
+          # updateos [--usb] [--yes] [--help] [ISO-FILE | DEVICE | FOLDER]
           #
           # Update this running OS to a newer version WITHOUT rebooting. Plug in a USB that has
           # the new version (flashed with the new ISO, or a normal USB with the .iso file on it).
@@ -2890,19 +2901,28 @@ jobs:
           M_PROBE=/run/update-probe    # throwaway mount used while looking for the new version
           FS_OK="vfat exfat ntfs ext2 ext3 ext4 btrfs f2fs xfs iso9660 udf"
           ASSUME_YES=0
+          USB_ONLY=0
           SRC_ARG=""
 
           usage() {
             cat <<'USAGE'
           Usage: updateos [OPTIONS] [ISO-FILE | DEVICE | FOLDER]
 
-          Update this running system to a newer version without rebooting. Plug in a USB that
-          has the new version (flashed with the new ISO, or a normal USB with the .iso file on
-          it), then run updateos. With no source it looks for one on the plugged-in USBs.
+          Update this running system to a newer version without rebooting. The new version can
+          come from a USB (flashed with the new ISO, or a normal USB with the .iso file on it), or
+          from an ISO file, device or folder that you name.
 
           Options:
+            --usb          update from a USB: wait for a plugged-in stick that has the new version
+                           and list what it finds (this is also what happens with no source)
             -y, --yes      do not ask for confirmation
             -h, --help     show this help
+
+          Examples:
+            updateos --usb                   update from a plugged-in USB
+            updateos --usb --yes             the same, without confirmation questions
+            updateos ~/Downloads/new.iso     update from an ISO file
+            updateos /dev/sdb1               update from a device
 
           Kept: your files, saved Wi-Fi networks, timezone, wallpaper and colours.
           Refreshed from the new version: bar, keybinds, launcher, notifications, terminal
@@ -2923,10 +2943,16 @@ jobs:
           for a in "$@"; do
             case "$a" in
               -y|--yes) ASSUME_YES=1 ;;
+              --usb) USB_ONLY=1 ;;
               -*) printf 'updateos: unknown option: %s\n\n' "$a" >&2; usage >&2; exit 2 ;;
               *) SRC_ARG="$a" ;;
             esac
           done
+          if [ "$USB_ONLY" = 1 ] && [ -n "$SRC_ARG" ]; then
+            printf 'updateos: --usb looks on the plugged-in USBs by itself, so do not name a file, folder or device with it.\n\n' >&2
+            usage >&2
+            exit 2
+          fi
 
           say() { printf '%s\n' "$*"; }
           die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
